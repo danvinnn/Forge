@@ -125,7 +125,11 @@ test("a flat pack reports that one number would unblock it, and names the number
   const choice = packageOptions(
     record({
       packageType: cited("16-Pin CFP"),
-      dimensions: { ...record().dimensions, leadForm: cited<"gullwing" | "nolead" | "straight">("straight") },
+      dimensions: {
+        ...record().dimensions,
+        leadForm: cited<"gullwing" | "nolead" | "straight">("straight"),
+        mounting: cited<"smd" | "through-hole">("smd")
+      },
       pinCount: cited(16),
       pins: cited(pins(16)),
       packageVariants: [variant("16-Pin CFP", "CFP", 16)]
@@ -267,8 +271,8 @@ test("a sibling package does not inherit the resolved package's printed land pat
     "a package whose own drawing was never read cannot claim to ship"
   );
   assert.ok(
-    by.get("VSSOP-8")!.needs.some((need) => need.field === "landPadLengthMm"),
-    "and it asks for its own land pattern rather than borrowing one"
+    by.get("VSSOP-8")!.needs.some((need) => need.field === "mounting"),
+    "and it first establishes holes versus surface lands rather than borrowing either"
   );
 });
 

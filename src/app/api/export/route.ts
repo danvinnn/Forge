@@ -11,8 +11,11 @@ import {
   type SuppliedDimensions
 } from "../../../lib/exporters";
 import { FootprintInvalidError } from "../../../lib/confidence";
+import { assessCadAssurance } from "../../../lib/cad-assurance";
+import { assessAssurance, type AssuranceFinding } from "../../../lib/assurance";
 import { partSchema, resolveForExport } from "../../../lib/types";
 import { sanitizeFileName, clientKey, RateLimiter } from "../../../lib/retrieval";
+import { compareKicadSymbolPins, importKicadFootprint } from "../../../lib/cad-import";
 
 export const runtime = "nodejs";
 // Cap how long an export can hold a serverless function open.
@@ -21,7 +24,7 @@ export const maxDuration = 30;
 // Export generates files and is CPU-bound, so it gets its own limiter.
 const exportLimiter = new RateLimiter(30, 60_000);
 // A part record is small JSON; reject anything absurd before parsing it.
-const MAX_EXPORT_BODY_BYTES = 1_000_000;
+const MAX_EXPORT_BODY_BYTES = 3_000_000;
 
 // Builds a Content-Disposition value that cannot break out of the header. Two defenses:
 //   1. Derive an ASCII-only fallback filename from the sanitized basename, so the plain filename=
@@ -167,6 +170,36 @@ export async function POST(request: Request) {
   // store because a controlled deployment may run several assembly lines against
   // one host; the store lives with the client that knows which line it is.
   const settings = parseSettings((payload as { settings?: unknown }).settings);
+  let importedFootprint;
+  let importedPinConfirmation: AssuranceFinding | null = null;
+  const importedCad = (payload as { importedCad?: unknown }).importedCad;
+  if (importedCad !== undefined) {
+    if (typeof importedCad !== "object" || importedCad === null) {
+      return NextResponse.json({ error: "importedCad must contain a vendor CAD filename and file text." }, { status: 400 });
+    }
+    const candidate = importedCad as { fileName?: unknown; source?: unknown };
+    if (typeof candidate.fileName !== "string" || typeof candidate.source !== "string") {
+      return NextResponse.json({ error: "The vendor CAD import is missing its filename or file text." }, { status: 400 });
+    }
+    try {
+      importedFootprint = importKicadFootprint(
+        { fileName: sanitizeFileName(candidate.fileName), source: candidate.source },
+        part,
+        densityOf(settings)
+      );
+      if (typeof (candidate as { pinEvidence?: unknown }).pinEvidence === "string") {
+        const comparison = compareKicadSymbolPins((candidate as { pinEvidence: string }).pinEvidence, part);
+        if (comparison.agrees) {
+          importedPinConfirmation = { id: "pinout", label: "Pin names and numbering", state: "confirmed", detail: comparison.detail };
+        }
+      }
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "The vendor CAD footprint could not be imported.", code: "VENDOR_CAD_UNUSABLE" },
+        { status: 422 }
+      );
+    }
+  }
 
   // The land pattern the user typed, when their datasheet did not print one.
   //
@@ -248,6 +281,68 @@ export async function POST(request: Request) {
     suppliedNumbers.leadsPerSide = perSide;
   }
 
+  const mounting = (payload as Record<string, unknown>).mounting;
+  if (mounting !== undefined) {
+    if (mounting !== "smd" && mounting !== "through-hole") {
+      return NextResponse.json(
+        { error: "mounting must be either smd or through-hole." },
+        { status: 400 }
+      );
+    }
+    suppliedNumbers.mounting = mounting;
+  }
+
+  // This is the public file-producing boundary. The chooser already uses the
+  // same policy to describe each option, but callers may invoke this route
+  // directly, so a proven contradiction is checked again before bytes exist.
+  const submitted = (payload as { assurance?: unknown }).assurance;
+  if (
+    typeof submitted !== "object" ||
+    submitted === null ||
+    (submitted as { evaluated?: unknown }).evaluated !== true ||
+    !Array.isArray((submitted as { findings?: unknown }).findings)
+  ) {
+    return NextResponse.json(
+      {
+        error: "This export has no CAD assurance result. Read the datasheet again before building the library.",
+        code: "ASSURANCE_REQUIRED"
+      },
+      { status: 422 }
+    );
+  }
+  const submittedFindings: AssuranceFinding[] = [];
+  for (const raw of (submitted as { findings: unknown[] }).findings.slice(0, 64)) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const item = raw as Record<string, unknown>;
+    if (
+      item.state !== "review" ||
+      typeof item.id !== "string" ||
+      typeof item.label !== "string" ||
+      typeof item.detail !== "string"
+    ) continue;
+    if (importedPinConfirmation?.state === "confirmed" && item.id === "pinout") continue;
+    submittedFindings.push({
+      id: item.id.slice(0, 96),
+      label: item.label.slice(0, 160),
+      state: "review",
+      detail: item.detail.slice(0, 1_000)
+    });
+  }
+  const serverAssurance = assessCadAssurance(part);
+  const assurance = assessAssurance({ findings: [...serverAssurance.findings, ...submittedFindings, ...(importedPinConfirmation ? [importedPinConfirmation] : [])] });
+  if (assurance.outcome === "refused") {
+    return NextResponse.json(
+      {
+        error: `The generated footprint is not valid and was not written because the evidence contradicts the package: ${assurance.contradictions.map((finding) => finding.label).join(", ")}.`,
+        code: "FOOTPRINT_INVALID",
+        violations: assurance.contradictions.map((finding) => `${finding.label}: ${finding.detail}`),
+        contradictions: assurance.contradictions,
+        packageType: part.packageType
+      },
+      { status: 422 }
+    );
+  }
+
   // A package with no characterised land pattern is a refusal, not a degraded
   // export. Emitting the symbol and the 3D body while silently dropping the
   // footprint would read as a success to anyone who did not check the file list.
@@ -274,7 +369,12 @@ export async function POST(request: Request) {
       // Blank still means B, which is IPC-7351B's own nominal. See
       // `densityOf`: resolving blank to the published standard is the whole
       // shape of the settings screen, not a default invented here.
-      densityLevel: densityOf(settings)
+      densityLevel: densityOf(settings),
+      // The browser is not the permanent record. Carry the exact release
+      // decision into manifest.json so every flagged or limited claim remains
+      // visible after the archive leaves Forge.
+      assurance,
+      importedFootprint
     });
   } catch (error) {
     if (error instanceof GeneratorUnavailableError) {

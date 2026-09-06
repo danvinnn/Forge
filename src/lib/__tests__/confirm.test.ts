@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { confirmations, MAX_FLAGGED } from "../confirm";
+import { confirmations } from "../confirm";
 import type { Corroboration, FootprintGeometry } from "../geometry";
 import type { PinRecord, ResolvedPart } from "../types";
 
@@ -34,7 +34,16 @@ function part(over: Partial<ResolvedPart> = {}): ResolvedPart {
     packageType: "SOIC (D)",
     packageOutlineCode: "D0008A",
     jedecOutline: null,
-    vendorLandPattern: { page: 55, valuesMm: [1.55, 0.6, 1.27, 5.4] },
+    vendorLandPattern: {
+      page: 55,
+      valuesMm: [1.55, 0.6, 1.27, 5.4],
+      dimensions: [
+        { repeat: 8, valueMm: 1.55 },
+        { repeat: 8, valueMm: 0.6 },
+        { repeat: 6, valueMm: 1.27 },
+        { repeat: null, valueMm: 5.4 }
+      ]
+    },
     pinCount: 8,
     pins: PINS,
     exposedPad: false,
@@ -103,11 +112,9 @@ test("a value with two agreeing sources is not put in front of the user", () => 
   assert.ok(!report.flagged.includes(copper));
 });
 
-test("a value with only one source is flagged, not shipped silently", () => {
+test("lack of a redundant source is not itself a review finding", () => {
   const report = confirmations(part(), geometry(ALONE), null);
-  const copper = report.items.find((item) => item.id === "land-pattern")!;
-  assert.equal(copper.state, "flagged");
-  assert.ok(copper.consequence, "a flagged item has to say what breaks if it is wrong");
+  assert.equal(report.items.find((item) => item.id === "land-pattern"), undefined);
 });
 
 test("there is no third state: every item is confirmed or flagged", () => {
@@ -125,12 +132,9 @@ test("there is no third state: every item is confirmed or flagged", () => {
   }
 });
 
-test("no document means the netlist has no second source, and says so", () => {
-  // Silence is not agreement. A caller that cannot supply the datasheet cannot
-  // confirm the pin names, and must not report them as confirmed.
+test("no independent pinout reading remains visible because wrong netlists pass provenance checks", () => {
   const report = confirmations(part(), geometry(AGREES), null);
-  const pinout = report.items.find((item) => item.id === "pinout")!;
-  assert.equal(pinout.state, "flagged");
+  assert.equal(report.items.find((item) => item.id === "pinout")?.state, "flagged");
 });
 
 test("a pin table the mechanical drawing contradicts is flagged", () => {
@@ -164,27 +168,24 @@ test("a count the package name contradicts is flagged", () => {
   assert.equal(item.state, "flagged");
 });
 
-test("a package name that states no count is still no second source", () => {
-  // The check must be able to come back empty, or it is not a check. A
-  // connector's name carries no count and nothing else here does either.
+test("a package name that states no count makes no confirmation claim", () => {
   const bare = part({
     packageType: "Dual Row Right Angle Thru Hole Header",
     pinCount: 4,
     dimensions: { ...part().dimensions, leadCount: null }
   });
-  const item = confirmations(bare, geometry(AGREES), null).items.find((entry) => entry.id === "pin-count")!;
-  assert.equal(item.state, "flagged");
-  assert.match(item.detail, /from the pin table alone/);
+  const item = confirmations(bare, geometry(AGREES), null).items.find((entry) => entry.id === "pin-count");
+  assert.equal(item, undefined);
 });
 
-test("the pitch is confirmed by the printed footprint and by nothing else", () => {
+test("the pitch is confirmed by a matching footprint without penalising its absence", () => {
   const withFootprint = confirmations(part(), geometry(AGREES), null).items.find((item) => item.id === "pitch")!;
   assert.equal(withFootprint.state, "confirmed");
 
   const without = confirmations(part({ vendorLandPattern: null }), geometry(AGREES), null).items.find(
     (item) => item.id === "pitch"
-  )!;
-  assert.equal(without.state, "flagged", "one reading of one drawing is one source");
+  );
+  assert.equal(without, undefined, "the reading's own provenance decides whether it needs review");
 });
 
 test("an exposed pad is asked about only when the package has one", () => {
@@ -200,10 +201,7 @@ test("an exposed pad is asked about only when the package has one", () => {
   assert.ok(pad, "a soldered, mandatory feature is always accounted for");
 });
 
-test("the budget is a hard number and the report states when it is exceeded", () => {
-  // Everything unread at once. `MAX_FLAGGED` is the point past which the product
-  // has stopped saving anyone time, so the chooser refuses rather than handing
-  // back a form; see `optionFor`.
+test("missing corroboration does not manufacture review findings", () => {
   const blind = part({
     vendorLandPattern: null,
     pins: [],
@@ -218,8 +216,8 @@ test("the budget is a hard number and the report states when it is exceeded", ()
     exposedPad: true
   });
   const report = confirmations(blind, geometry(ALONE), null);
-  assert.ok(report.flagged.length > MAX_FLAGGED, "this record has nothing corroborated");
-  assert.equal(report.overBudget, true);
+  assert.ok(report.flagged.length > 0, "actual missing output inputs remain visible");
+  assert.equal(report.overBudget, false);
 });
 
 test("a lead off its copper flags the land pattern, whatever the band says", () => {
@@ -242,7 +240,7 @@ test("a lead off its copper flags the land pattern, whatever the band says", () 
   assert.match(item.detail, /still overhangs its copper/);
 });
 
-test("a clean overlay does NOT confirm the land pattern on its own", () => {
+test("a clean overlay neither confirms nor condemns the land pattern", () => {
   // STM32F103C8 is why. Its UFQFPN48 lands sit on a 6.55 mm span where the
   // datasheet prints 6.75, and every terminal is still entirely on its copper,
   // so the overlay is happy about a footprint 0.1 mm out on every pad. Proving
@@ -254,9 +252,8 @@ test("a clean overlay does NOT confirm the land pattern on its own", () => {
       { number: "2", centre: { xMm: -2.7, yMm: 0 }, widthMm: 1.55, heightMm: 0.6, shape: "roundrect", mounting: "smd" }
     ]
   } as unknown as FootprintGeometry;
-  const item = confirmations(part(), clean, null).items.find((entry) => entry.id === "land-pattern")!;
-  assert.equal(item.state, "flagged");
-  assert.equal(item.because, "no-printed-footprint");
+  const item = confirmations(part(), clean, null).items.find((entry) => entry.id === "land-pattern");
+  assert.equal(item, undefined);
 });
 
 test("the package name is a second source for how the leads are arranged", () => {
@@ -296,7 +293,8 @@ test("a body the printed footprint contradicts is flagged, not confirmed", () =>
   assert.equal(item.state, "flagged");
   assert.equal(item.because, "printed-footprint-disagrees");
 
-  // And a real body, with the same printed footprint, is untouched.
-  const ok = confirmations(part(), geometry(AGREES), null).items.find((entry) => entry.id === "body")!;
-  assert.equal(ok.state, "confirmed");
+  // A plausible body with no contrary evidence is judged by its provenance,
+  // not flagged merely because the datasheet prints it once.
+  const ok = confirmations(part(), geometry(AGREES), null).items.find((entry) => entry.id === "body");
+  assert.equal(ok, undefined);
 });

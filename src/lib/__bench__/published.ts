@@ -40,7 +40,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildFootprintGeometry, FootprintUnavailableError } from "../exporters";
 import { defect } from "./inject";
-import { replayRecords } from "./replay";
+import { replayRecordsWithDocuments } from "./replay";
 import { thermalPadNumber } from "../geometry";
 import type { Pad } from "../geometry";
 import type { ResolvedPart } from "../types";
@@ -255,7 +255,7 @@ async function main(): Promise<void> {
   const rows: Row[] = [];
   const unmatched: string[] = [];
 
-  for (const part of replayRecords()) {
+  for (const part of await replayRecordsWithDocuments()) {
     let pads: Pad[];
     try {
       // A LAND PATTERN A THIRD TOO BIG IN EVERY DIRECTION, which is the size of

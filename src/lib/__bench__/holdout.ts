@@ -35,6 +35,7 @@
 // `.bench-cache/` is: no vendor datasheet is ever committed to this repo.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { extractPartRecord } from "../datasheet";
 import { makeExtractionModel, runExtraction } from "../extraction";
 import { type PartRecord } from "../types";
@@ -466,11 +467,13 @@ async function main(): Promise<void> {
   }
 }
 
-// REPORTED, not swallowed. A bare `main()` turned any throw outside the guarded
-// blocks into an unhandled rejection: on the PAID run that is money spent and no
-// figure printed, which is the same shape as the `shipOutcome` rethrow that
-// ended a 56-part run one level down.
-main().catch((error) => {
-  console.error("hold-out run failed:", error);
-  process.exitCode = 1;
-});
+// REPORTED, not swallowed, but only when this file is the command entry point.
+// The corpus-separation test imports HOLDOUT_CORPUS; running the paid-capable
+// benchmark as an import side effect both wastes time and prints a false 0%
+// headline inside an otherwise green unit-test run.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error("hold-out run failed:", error);
+    process.exitCode = 1;
+  });
+}

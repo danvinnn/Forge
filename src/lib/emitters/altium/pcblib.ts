@@ -225,7 +225,7 @@ function padRecord(
   // how Altium encodes a ROUNDED RECTANGLE: the base stays round and the real
   // shape lives in the per-layer stack below. A round through-hole pad wants
   // Round in both places, which is what the reference file shows.
-  main.writeDoubleLE(0, 52); // no rotation: the land pattern is already axis-aligned
+  main.writeDoubleLE(pad.rotationDeg ?? 0, 52);
   // PLATED, at offset 60. Derived from the reader's own field order rather than
   // guessed: 13 common + 8 location + 24 sizes + 4 hole + 3 shapes + 8 rotation.
   // Without it the hole is written but read back as unplated, which is a hole

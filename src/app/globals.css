@@ -854,6 +854,24 @@ button:disabled {
   width: 9rem;
 }
 
+.ask-row select {
+  min-width: min(24rem, 100%);
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+}
+
+.spice-block-row {
+  flex-wrap: wrap;
+}
+
+.spice-block-row select {
+  flex: 1 1 16rem;
+}
+
 /* --- the record ------------------------------------------------------------- */
 
 .disclose {

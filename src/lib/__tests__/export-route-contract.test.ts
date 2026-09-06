@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import JSZip from "jszip";
 import { POST } from "../../app/api/export/route";
 import { extractedValue, resolveForExport, unknown, type PartRecord, type PinRecord } from "../types";
 import { labelForField } from "../review";
@@ -75,7 +76,9 @@ function exportablePart(
       landSpanCrossMm: unknown<number>(),
       leadSides: citedValue<2 | 4>(2),
       leadForm: citedValue<"gullwing" | "nolead" | "straight">(leadForm),
-      mounting: unknown<"smd" | "through-hole">(),
+      mounting: leadForm === "straight"
+        ? citedValue<"smd" | "through-hole">("smd")
+        : unknown<"smd" | "through-hole">(),
       leadDiameterMm: unknown<number>(),
       holeDiameterMm: unknown<number>(),
       vacantLeadSlot: unknown<number>(),
@@ -107,12 +110,40 @@ function exportablePart(
 let caller = 0;
 function post(body: unknown): Request {
   caller += 1;
+  const payload =
+    typeof body === "object" && body !== null
+      ? { assurance: { evaluated: true, findings: [] }, ...(body as Record<string, unknown>) }
+      : body;
   return new Request("http://localhost/api/export", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-forwarded-for": `10.0.0.${caller % 251}` },
-    body: JSON.stringify(body)
+    body: JSON.stringify(payload)
   });
 }
+
+test("the file boundary requires the CAD assurance result", async () => {
+  const response = await POST(
+    post({ part: exportablePart("8-pin SOIC", 8), format: "kicad", assurance: undefined })
+  );
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).code, "ASSURANCE_REQUIRED");
+});
+
+test("the file boundary preserves many review notes without refusing a buildable library", async () => {
+  const findings = Array.from({ length: 6 }, (_, index) => ({
+    id: `review-${index}`,
+    label: `Review ${index}`,
+    state: "review",
+    detail: "Needs a page check."
+  }));
+  const response = await POST(
+    post({ part: exportablePart("8-pin SOIC", 8), format: "kicad", assurance: { evaluated: true, findings } })
+  );
+  assert.equal(response.status, 200);
+  const zip = await JSZip.loadAsync(await response.arrayBuffer());
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  assert.equal(manifest.releaseAssurance.review.length, 6);
+});
 
 test("a refusal the user can answer arrives as INPUT_REQUIRED with the field named", async () => {
   const response = await POST(post({ part: exportablePart("14-lead CFP", 14, "straight"), format: "kicad" }));
@@ -144,6 +175,10 @@ test("supplying the value over the wire produces the bundle", async () => {
   assert.equal(response.headers.get("Content-Type"), "application/zip");
   const bytes = await response.arrayBuffer();
   assert.ok(bytes.byteLength > 0);
+  const zip = await JSZip.loadAsync(bytes);
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  assert.equal(manifest.releaseAssurance.outcome, "ready");
+  assert.ok(Array.isArray(manifest.releaseAssurance.findings));
 });
 
 test("a package with nothing read for it asks for the land pattern instead of dead-ending", async () => {
@@ -249,7 +284,8 @@ const ASKABLE: Array<{ field: string; good: unknown; bad: unknown }> = [
   { field: "leadsPerSide", good: "6,6,6,5", bad: "6,6,6" },
   { field: "thermalPadLengthMm", good: 2.1, bad: 0 },
   { field: "thermalPadWidthMm", good: 2.1, bad: -2 },
-  { field: "vacantLeadSlot", good: 2, bad: 0 }
+  { field: "vacantLeadSlot", good: 2, bad: 0 },
+  { field: "mounting", good: "smd", bad: "maybe" }
 ];
 
 /**

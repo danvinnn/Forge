@@ -6,7 +6,9 @@ import { packageOptions, type OptionAnswers, type PackageChoice, type RequiredIn
 import { sameDesignatorName } from "./packagevariants";
 import { confidenceChecks, type ConfidenceCheck } from "./confidence";
 import type { Confirmation } from "./confirm";
-import { resolveForExport, type PartRecord } from "./types";
+import { assessCadAssurance } from "./cad-assurance";
+import type { AssuranceDecision } from "./assurance";
+import { resolveForExport, type PartRecord, type VendorLandEvidence } from "./types";
 import type { DatasheetText } from "./pdftext";
 
 /**
@@ -53,6 +55,8 @@ export interface Readout {
    * list on `PackageOption.toCheck`.
    */
   toCheck: Confirmation[];
+  /** One policy decision over semantic confirmations and model-read reviews. */
+  assurance: AssuranceDecision | null;
   /** Pages the panel shows: every page a question or a review item points at. */
   reviewPages: RenderedPage[];
 }
@@ -91,7 +95,8 @@ export function withPrintedFootprint(part: PartRecord, doc: DatasheetText): Part
         ...part,
         vendorLandPattern: {
           page: printed.page,
-          valuesMm: printed.dimensions.map((dimension) => dimension.valueMm)
+          valuesMm: printed.dimensions.map((dimension) => dimension.valueMm),
+          dimensions: printed.dimensions
         }
       };
     } else {
@@ -158,7 +163,78 @@ export function withPrintedFootprint(part: PartRecord, doc: DatasheetText): Part
       )
     };
   }
-  return part;
+  return repairInnerGapSpans(part);
+}
+
+/**
+ * An inner and outer row extent prove the centre span without interpreting a
+ * vendor-specific drawing style: inner + 2 * land = outer, so centre is inner
+ * + land. This covers gull-wing and no-lead footprints with the same rule.
+ */
+function repairInnerGapSpans(part: PartRecord): PartRecord {
+  const corrected = (
+    dimensions: Partial<PartRecord["dimensions"]>,
+    evidence: VendorLandEvidence | undefined,
+    label: string
+  ): { dimensions: Partial<PartRecord["dimensions"]>; notes: string[] } => {
+    const land = dimensions.landPadLengthMm?.value;
+    if (typeof land !== "number" || !evidence || evidence.valuesMm.length === 0) {
+      return { dimensions, notes: [] };
+    }
+    const appears = (value: number) => evidence.valuesMm.some((candidate) => Math.abs(candidate - value) <= 0.01);
+    const form = dimensions.leadForm?.value;
+    let next = dimensions;
+    const notes: string[] = [];
+    for (const field of ["landSpanMm", "landSpanCrossMm"] as const) {
+      const held = dimensions[field];
+      const span = held?.value;
+      if (typeof span !== "number") continue;
+      let centre: number | null = null;
+      if (appears(span) && appears(span + 2 * land)) {
+        centre = Number((span + land).toFixed(6));
+      } else if (form === "nolead") {
+        // A no-lead terminal ends at the body edge, so its land must cross that
+        // edge. Among bare footprint callouts this gives an exact interval,
+        // body-land <= centre <= body+land, without knowing the vendor's labels.
+        const bodyField = field === "landSpanMm" ? "bodyWidthMm" : "bodyLengthMm";
+        const body = dimensions[bodyField]?.value;
+        const candidates = [
+          ...new Set(
+            (evidence.dimensions ?? [])
+              .filter((dimension) => dimension.repeat === null)
+              .map((dimension) => dimension.valueMm)
+              .filter(
+                (candidate) =>
+                  typeof body === "number" && Math.abs(candidate - body) <= land + 0.01
+              )
+          )
+        ];
+        if (candidates.length === 1 && Math.abs(candidates[0] - span) > 0.01) centre = candidates[0];
+      }
+      if (centre === null) continue;
+      next = { ...next, [field]: { ...held, value: centre } };
+      notes.push(
+        `${label}${field} was read as ${span} mm. The footprint's callouts and the ${land} mm land geometry ` +
+          `identify ${centre} mm as the centre span.`
+      );
+    }
+    return { dimensions: next, notes };
+  };
+
+  const flat = corrected(part.dimensions, part.vendorLandPattern ?? undefined, "");
+  const notes = [...part.notes, ...flat.notes];
+  const packages = part.packagesInThisDocument?.map((entry) => {
+    if (!entry.dimensions) return entry;
+    const fixed = corrected(entry.dimensions, entry.vendorLandPattern, `${entry.packageType}'s `);
+    notes.push(...fixed.notes);
+    return fixed.dimensions === entry.dimensions ? entry : { ...entry, dimensions: fixed.dimensions };
+  });
+  return {
+    ...part,
+    dimensions: flat.dimensions as PartRecord["dimensions"],
+    ...(packages ? { packagesInThisDocument: packages } : {}),
+    notes
+  };
 }
 
 /**
@@ -181,7 +257,7 @@ function printedFootprintFor(
   outlineCode: string | undefined,
   /** How many packages this document describes. See `findUnreadableFootprint`. */
   packagesInDocument: number
-): { vendorLandPattern?: { page: number; valuesMm: number[] } } {
+): { vendorLandPattern?: VendorLandEvidence } {
   // EVERY NAME THIS DOCUMENT PRINTS FOR THE PACKAGE, because the footprint's
   // caption and the pinout's caption are routinely different words for one
   // package. That is the whole reason `alsoKnownAs` exists.
@@ -191,7 +267,8 @@ function printedFootprintFor(
       return {
         vendorLandPattern: {
           page: printed.page,
-          valuesMm: printed.dimensions.map((dimension) => dimension.valueMm)
+          valuesMm: printed.dimensions.map((dimension) => dimension.valueMm),
+          dimensions: printed.dimensions
         }
       };
     }
@@ -268,7 +345,7 @@ export async function buildReadout(
     ? { ok: true, options: packageChoice.options.map((option) => ({ ...option, needs: withPages(option.needs) })) }
     : packageChoice;
 
-  const review = collectReviewItems(resolved);
+  const rawReview = collectReviewItems(resolved);
 
   // The chooser already computed this per package, against the real geometry.
   // Read back rather than recomputed, so the panel and the dropdown can never
@@ -278,6 +355,13 @@ export async function buildReadout(
       ? located.options.find((option) => sameDesignatorName(option.designator, resolved.packageType.value!))
       : undefined;
   const toCheck = settled?.toCheck ?? (located.ok ? (located.options.find((option) => option.toCheck)?.toCheck ?? []) : []);
+  const assurance = forChecks.ok
+    ? assessCadAssurance(forChecks.part, settled?.confirmation ?? null, rawReview)
+    : null;
+  // This is the complete reading disclosure, not the bounded action list. The
+  // latter is `assurance.review`/`toCheck`; keeping every model-read field here
+  // lets a user inspect or correct even a value independently confirmed later.
+  const review = rawReview;
 
   // Every page the user might be shown: the ones review cites, plus the ones the
   // questions point at, plus the drawing. Rendered together because a second
@@ -309,6 +393,7 @@ export async function buildReadout(
     checks,
     review,
     toCheck,
+    assurance,
     reviewPages: wanted.map((page) => have.get(page)).filter((image): image is RenderedPage => Boolean(image))
   };
 }

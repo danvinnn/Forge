@@ -68,7 +68,10 @@ function bare(overrides: Partial<ResolvedPart> = {}): ResolvedPart {
       landSpanCrossMm: null,
       leadSides: null,
       leadForm: null,
-      mounting: null,
+      // This fixture isolates land-pattern behavior; mounting is independently
+      // established so an ambiguity about holes versus lands does not pre-empt
+      // the question under test.
+      mounting: "smd",
       leadDiameterMm: null,
       holeDiameterMm: null,
       vacantLeadSlot: null,

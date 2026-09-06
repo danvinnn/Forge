@@ -1715,6 +1715,31 @@ export function mergeModelValues(
       if (entry.packageType !== seen.packageType) names.add(entry.packageType);
       if (names.size > 0) seen.alsoKnownAs = [...names];
     }
+    // Two entries with the same caption and no drawing code cannot safely be
+    // stitched: family datasheets can print distinct outlines under that one
+    // caption. Keep both, but name every measurement that is consequently
+    // unreachable so a real read is never indistinguishable from silence.
+    const captionKey = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const ambiguous = new Map<string, typeof usable>();
+    for (const entry of joined.filter((candidate) => !candidate.outlineCode)) {
+      const key = captionKey(entry.packageType);
+      ambiguous.set(key, [...(ambiguous.get(key) ?? []), entry]);
+    }
+    for (const group of ambiguous.values()) {
+      if (group.length < 2) continue;
+      const caption = group[0].packageType;
+      const reason =
+        `package "${caption}" was read more than once without an outline code, and the readings cannot be ` +
+        `proved to describe the same drawing`;
+      const fields = new Set<ExtractionField>();
+      for (const entry of group) {
+        for (const field of Object.keys(entry.dimensions ?? {})) {
+          fields.add(`dimensions.${field}` as ExtractionField);
+        }
+      }
+      for (const field of fields) rejected.push({ field, reason });
+      merged.notes.push(`The ${reason}. Its separate readings are kept, but none is silently stitched into a package.`);
+    }
     if (joined.length > 0) merged.packagesInThisDocument = joined;
   }
 
@@ -1898,4 +1923,3 @@ function packageDimensions(
   }
   return Object.keys(out).length > 0 ? (out as Partial<PartRecord["dimensions"]>) : undefined;
 }
-

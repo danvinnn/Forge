@@ -1,0 +1,2551 @@
+{
+  "generated": "2026-09-06T03:46:27.130Z",
+  "rows": [
+    {
+      "part": "282836-2",
+      "packageType": "2-position PCB terminal block",
+      "pinCount": 2,
+      "pins": 2,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 12,
+      "cells": {
+        "mounting": "through-hole",
+        "arrangement": "single",
+        "thermalPad": "no",
+        "landSource": "ipc7251",
+        "packageChoice": "one",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "43045-0400",
+      "packageType": "Header",
+      "pinCount": 4,
+      "pins": 4,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "through-hole",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7251",
+        "packageChoice": "one",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "AD5679R",
+      "packageType": "28-Lead LFCSP",
+      "pinCount": 28,
+      "pins": 28,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "AD590",
+      "packageType": "2-Lead Ceramic Flat Package",
+      "pinCount": 2,
+      "pins": 2,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "AD620",
+      "packageType": "8-lead SOIC_N",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "AD7124-8",
+      "packageType": "32-Lead LFCSP",
+      "pinCount": 32,
+      "pins": 32,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "AD7606",
+      "packageType": "64-Lead LQFP",
+      "pinCount": 64,
+      "pins": 64,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 3,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "one",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "AD8221",
+      "packageType": "8-lead SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "AD8232",
+      "packageType": "20-Lead Lead Frame Chip Scale Package [LFCSP]",
+      "pinCount": 20,
+      "pins": 20,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "AD8628",
+      "packageType": "8-Lead SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 3,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "AD9833",
+      "packageType": "10-lead MSOP",
+      "pinCount": 10,
+      "pins": 10,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADA4522-2",
+      "packageType": "8-Lead SOIC_N",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADC128S102QML-SP",
+      "packageType": "16-Pin CFP",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 3,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADG5412",
+      "packageType": "Unknown package",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 7,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ADM3202",
+      "packageType": "Unknown package",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ADR4525",
+      "packageType": "8-Lead SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 3,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ADS1115#VSSOP (DGS)",
+      "packageType": "VSSOP",
+      "pinCount": 10,
+      "pins": 10,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADS1115",
+      "packageType": "X2QFN (RUG)",
+      "pinCount": 10,
+      "pins": 10,
+      "flagged": -1,
+      "asked": 1,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ADS1220",
+      "packageType": "TSSOP (16)",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADS1256",
+      "packageType": "SSOP-28",
+      "pinCount": 28,
+      "pins": 28,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADS8688",
+      "packageType": "TSSOP-38",
+      "pinCount": 38,
+      "pins": 38,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADUM1201",
+      "packageType": "SOIC_N",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "one",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADXL345",
+      "packageType": "14-Terminal Land Grid Array [LGA]",
+      "pinCount": 14,
+      "pins": 14,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "one",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ADXL362",
+      "packageType": "16-Terminal Land Grid Array [LGA]",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "one",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "CD4017B",
+      "packageType": "SOP",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "DAC8552",
+      "packageType": "MSOP-8",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "DF13-4P-1.25DSA",
+      "packageType": "Single Row Straight Pin Header (Through hole)",
+      "pinCount": 4,
+      "pins": 4,
+      "flagged": -1,
+      "asked": 0,
+      "refusal": "INCOMPLETE_EXTRACTION",
+      "ms": 0,
+      "cells": {
+        "mounting": "through-hole",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "DRV8825",
+      "packageType": "HTSSOP (28)",
+      "pinCount": 28,
+      "pins": 28,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "INA226",
+      "packageType": "VSSOP (10)",
+      "pinCount": 10,
+      "pins": 10,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "INA240",
+      "packageType": "TSSOP (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "INA333",
+      "packageType": "VSSOP (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ISL71001M",
+      "packageType": "64-EP-TQFP",
+      "pinCount": 64,
+      "pins": 64,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 3,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ISO7741#SOIC (DW)",
+      "packageType": "SOICDW",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ISO7741",
+      "packageType": "Unknown package",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 5,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ISO7841",
+      "packageType": "DW (16)",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "L7805",
+      "packageType": "TO-220",
+      "pinCount": 3,
+      "pins": 3,
+      "flagged": -1,
+      "asked": 7,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "LD39050",
+      "packageType": "DFN6 (3x3 mm)",
+      "pinCount": 6,
+      "pins": 6,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "LIS3DH",
+      "packageType": "LGA-16",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "LM139AQML-SP",
+      "packageType": "14-lead CERPACK",
+      "pinCount": 14,
+      "pins": 14,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "LM358#SOIC (D)",
+      "packageType": "SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "LM358",
+      "packageType": "8-Pin SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "LM5117",
+      "packageType": "20-Pin HTSSOP",
+      "pinCount": 20,
+      "pins": 20,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "LMP7704-SP",
+      "packageType": "CFP (14)",
+      "pinCount": 14,
+      "pins": 14,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "LMV321",
+      "packageType": "DBV (SOT-23, 5)",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 15,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "LPS22HB",
+      "packageType": "HLGA-10L",
+      "pinCount": 10,
+      "pins": 10,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "LSM6DSO",
+      "packageType": "LGA-14L",
+      "pinCount": 14,
+      "pins": 14,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "LT1013",
+      "packageType": "8-Lead PDIP",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 3,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "LTC2400",
+      "packageType": "8-lead plastic SO",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "LTC6563",
+      "packageType": "24-Lead Plastic Side Solderable QFN (3mm × 5mm)",
+      "pinCount": 24,
+      "pins": 24,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "one",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "MAX232#SOIC (D)",
+      "packageType": "SOIC",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "MAX232",
+      "packageType": "Unknown package",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "MC33063A",
+      "packageType": "SOIC (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "MSP430F5529",
+      "packageType": "LQFP (80)",
+      "pinCount": 80,
+      "pins": 80,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 3,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "MSP430FR2433",
+      "packageType": "24-pin RGE",
+      "pinCount": 24,
+      "pins": 24,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "NCP1200",
+      "packageType": "SOIC-8",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "OP07",
+      "packageType": "8-lead PDIP",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 1,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 1,
+      "cells": {
+        "mounting": "through-hole",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "OPA1612",
+      "packageType": "SOIC (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "OPA192",
+      "packageType": "8-Pin SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "OPA2189#SOIC (D)",
+      "packageType": "SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "OPA2189",
+      "packageType": "SOIC (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 4,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "OPA333",
+      "packageType": "8-Pin SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "PCM1808",
+      "packageType": "14-Pin TSSOP",
+      "pinCount": 14,
+      "pins": 14,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "REF3025",
+      "packageType": "SOT-23",
+      "pinCount": 3,
+      "pins": 3,
+      "flagged": -1,
+      "asked": 1,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "REF5025",
+      "packageType": "CFP (HKJ)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "RHF1201",
+      "packageType": "Ceramic SO48",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "RHF310A",
+      "packageType": "Ceramic Flat-8",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "SN65HVD230",
+      "packageType": "SOIC (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "SN65HVD72",
+      "packageType": "8-pin SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 1,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "SN74AUP1G04",
+      "packageType": "SOT-23 (5)",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "SN74HC595",
+      "packageType": "16-Pin SOIC",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "SN74LVC245A",
+      "packageType": "VQFN (20)",
+      "pinCount": 20,
+      "pins": 20,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ST1S10",
+      "packageType": "DFN8 (4x4)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "STM32F030C8",
+      "packageType": "LQFP48",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "STM32F103C8",
+      "packageType": "Unknown package",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "STM32F103C8__narrowpins16",
+      "packageType": "Unknown package",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "STM32F407VG",
+      "packageType": "LQFP100",
+      "pinCount": 100,
+      "pins": 100,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "STM32F407VG__narrowpins16",
+      "packageType": "LQFP100",
+      "pinCount": 100,
+      "pins": 100,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "STM32F411RE",
+      "packageType": "LQFP64",
+      "pinCount": 64,
+      "pins": 64,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "STM32G071RB",
+      "packageType": "LQFP64",
+      "pinCount": 64,
+      "pins": 64,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "STM32H743ZI",
+      "packageType": "LQFP144",
+      "pinCount": 144,
+      "pins": 144,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 4,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "STM32H743ZI__narrowpins",
+      "packageType": "LQFP144",
+      "pinCount": 144,
+      "pins": 144,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "STM32L476RG",
+      "packageType": "LQFP64",
+      "pinCount": 64,
+      "pins": 64,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TCA9548A",
+      "packageType": "24-Pin VQFN",
+      "pinCount": 24,
+      "pins": 24,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "THS3491",
+      "packageType": "RGT (VQFN, 16)",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "TL431",
+      "packageType": "D (SOIC)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TLV9002",
+      "packageType": "SOIC (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TLV9061",
+      "packageType": "SOT-23",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TMP117",
+      "packageType": "6-pin WSON",
+      "pinCount": 6,
+      "pins": 6,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TPD4E1U06",
+      "packageType": "SC70",
+      "pinCount": 6,
+      "pins": 6,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TPS54360",
+      "packageType": "8-Pin HSOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TPS61022",
+      "packageType": "VQFN-HR (7)",
+      "pinCount": 7,
+      "pins": 7,
+      "flagged": -1,
+      "asked": 1,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "TPS62130",
+      "packageType": "VQFN (16)",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TPS63020",
+      "packageType": "VSON (14)",
+      "pinCount": 14,
+      "pins": 14,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TPS7A4501-SP",
+      "packageType": "10-pin CFP",
+      "pinCount": 10,
+      "pins": 10,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "TPS7A4700",
+      "packageType": "VQFN (20)",
+      "pinCount": 20,
+      "pins": 20,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TPS7A4901",
+      "packageType": "Unknown package",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "TS922",
+      "packageType": "Unknown package",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "TSB611",
+      "packageType": "SOT23-5",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "TSU101",
+      "packageType": "Unknown package",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "TSV321",
+      "packageType": "SOT23-5",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "UCC27524#SOIC (D)",
+      "packageType": "SOIC",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "UCC27524",
+      "packageType": "SOIC (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "UCC28C43",
+      "packageType": "8-pin VSSOP",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "several",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "UT54LVDS217",
+      "packageType": "48-Lead Flatpack",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "VA10820",
+      "packageType": "128 Pin Ceramic LQFP",
+      "pinCount": 128,
+      "pins": 128,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "one",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "VIPER22A",
+      "packageType": "DIP-8",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 1,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "through-hole",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "several",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ZXCT1010",
+      "packageType": "SOT25",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "ipc7351b",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ads127l01",
+      "packageType": "TQFP (32)",
+      "pinCount": 32,
+      "pins": 32,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "dac81404",
+      "packageType": "VQFN (32)",
+      "pinCount": 32,
+      "pins": 32,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "di-AH3373",
+      "packageType": "Unknown package",
+      "pinCount": 3,
+      "pins": 3,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "di-PI3USB102",
+      "packageType": "Unknown package",
+      "pinCount": 10,
+      "pins": 10,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "dk-LX7730",
+      "packageType": "CQFP 132L",
+      "pinCount": 132,
+      "pins": 132,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "fg-ut54acs164245s",
+      "packageType": "48-lead flatpack",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "fg-ut54lvds032",
+      "packageType": "16-pin Ceramic Flatpack",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "lmh6521",
+      "packageType": "WQFN (32)",
+      "pinCount": 32,
+      "pins": 32,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "lmk04828",
+      "packageType": "WQFN (64)",
+      "pinCount": 64,
+      "pins": 64,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "rn-isl73847seh",
+      "packageType": "24 Lead CDFP",
+      "pinCount": 24,
+      "pins": 24,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ti-adc3683",
+      "packageType": "WQFN (40)",
+      "pinCount": 40,
+      "pins": 40,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ti-ads8900b",
+      "packageType": "VQFN (24)",
+      "pinCount": 24,
+      "pins": 24,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-cc1352p",
+      "packageType": "VQFN (48)",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ti-hdc3020",
+      "packageType": "WSON (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 5,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-lm5170",
+      "packageType": "TQFP (48)",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "ipc7351b",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-lmp7721",
+      "packageType": "SOIC (8)",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-lmx2820",
+      "packageType": "VQFN (48)",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-opa2810",
+      "packageType": "Unknown package",
+      "pinCount": 8,
+      "pins": 8,
+      "flagged": -1,
+      "asked": 8,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "not read",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ti-sn6501",
+      "packageType": "SOT-23 (5)",
+      "pinCount": 5,
+      "pins": 5,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-tmag5273",
+      "packageType": "SOT-23 (6)",
+      "pinCount": 6,
+      "pins": 6,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-tps25990",
+      "packageType": "VQFN-HR (26)",
+      "pinCount": 26,
+      "pins": 26,
+      "flagged": -1,
+      "asked": 1,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ti-tps548b22",
+      "packageType": "LQFN-CLIP (40)",
+      "pinCount": 40,
+      "pins": 40,
+      "flagged": 4,
+      "asked": 0,
+      "refusal": null,
+      "ms": 2,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "quad",
+        "thermalPad": "yes",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "ti-ucc21750",
+      "packageType": "SOIC-16",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": 3,
+      "asked": 0,
+      "refusal": null,
+      "ms": 1,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "dual",
+        "thermalPad": "no",
+        "landSource": "printed",
+        "packageChoice": "not rebuilt",
+        "outcome": "ships unaided",
+        "flagBudget": "some flagged"
+      }
+    },
+    {
+      "part": "tps23881",
+      "packageType": "VQFN (56)",
+      "pinCount": 56,
+      "pins": 56,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "tps7a8300",
+      "packageType": "VQFN (20)",
+      "pinCount": 20,
+      "pins": 20,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "yes",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ut54lvds031",
+      "packageType": "16-pin Ceramic Flatpack",
+      "pinCount": 16,
+      "pins": 16,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    },
+    {
+      "part": "ut7r995_3",
+      "packageType": "48-Lead Ceramic Flatpack",
+      "pinCount": 48,
+      "pins": 48,
+      "flagged": -1,
+      "asked": 2,
+      "refusal": "INPUT_REQUIRED",
+      "ms": 0,
+      "cells": {
+        "mounting": "smd",
+        "arrangement": "none",
+        "thermalPad": "no",
+        "landSource": "none",
+        "packageChoice": "not rebuilt",
+        "outcome": "refuses, answerable",
+        "flagBudget": "no copper"
+      }
+    }
+  ]
+}

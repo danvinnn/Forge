@@ -1,9 +1,11 @@
 # Forge
 
-Forge is a datasheet-to-CAD intake tool for radiation-hardened aerospace and defense components. You
-give it a part number or upload a datasheet PDF; it extracts the pinout, package geometry,
-dimensions, and radiation qualification data, then generates schematic symbols, footprints, and STEP
-3D models.
+Forge turns component datasheets into usable CAD libraries and auditable SPICE models. It is for any
+engineer working with PCB/CAD or circuit simulation, from a first board through staff-level review.
+Radiation-hardened aerospace and defense parts remain a deliberate strength rather than the boundary
+of the product. Give Forge a part number or upload a datasheet PDF; it extracts the pinout, package
+geometry, dimensions, electrical specifications, and qualification data, then generates schematic
+symbols, footprints, STEP bodies, and supported LTspice macromodels.
 
 **Every extracted value carries a confidence score and a citation back to the page it was read
 from.** That is the point of the product, not a feature of it: IPC Class 3 and QML/QPL sign-off
@@ -81,9 +83,27 @@ Every extracted value is escaped at the sink before being interpolated into gene
   deployment mode and is the primary path for controlled parts.
 - **Extracted**: part number, manufacturer, package type, pin count, pin table, package dimensions,
   and radiation qualification (TID, SEE, SEL, QML class), each with confidence and citation.
-- **Export formats**: KiCad is the primary path (`.kicad_sym` + `.kicad_mod` + a real STEP Part 21
-  solid). Altium and Cadence/OrCAD are exposed as documented intermediate bundles, **not** native
-  vendor library files.
+- **CAD export formats**: KiCad (`.kicad_sym` + `.kicad_mod` + STEP) and native Altium libraries.
+  Cadence/OrCAD is shown as unavailable rather than emitting a misleading substitute.
+- **Official-resource recovery**: once a manufacturer and part are known, Forge inspects the
+  manufacturer's own product page for CAD, package-drawing, application-note, and SPICE resources.
+  A supported direct file or archive can be imported in place. Vendor KiCad copper is parsed into
+  Forge's format-neutral geometry, checked against the extracted terminal set and geometry
+  invariants, then emitted wherever the selected format can represent it exactly; it is never
+  trusted merely because it came from a vendor archive.
+  When the archive also carries a KiCad symbol, exact agreement on every pin number and name is
+  independent pinout evidence; disagreement leaves the source-page review in place and never
+  overwrites the datasheet reading.
+- **SPICE output**: deterministic LTspice `.lib` and `.asy` files plus a conformance receipt for
+  operational amplifiers, comparators, voltage references, and LDO regulators. Forge refuses a
+  topology it cannot support; instrumentation-amplifier equations are not silently approximated.
+  A refusal is not a dead end: a page-backed review can recover a missed supported-class value,
+  and any standalone vendor `.SUBCKT` (plus supported LTspice primitive `.MODEL` cards) can be
+  turned into a terminal-order-preserving adapter and neutral symbol. Where the simulator requires
+  an instance value, Forge asks for it instead of guessing. Vendor-backed results are labelled
+  structural rather than falsely described as datasheet-conformant.
+- **Combined output**: the approved `Both` flow returns one archive with `cad/` and `spice/`
+  directories and a root README.
 - **Bundle contents**: symbol, footprint, STEP package body, normalized JSON, and a manifest.
 
 ## Known limitations
@@ -97,7 +117,11 @@ Stated rather than hidden.
 - **The text parser is tuned toward TI phrasing.** On other vendors it misses more, and those misses
   are recorded as unknown rather than guessed.
 - **STEP export generates the package body enclosure only**; pin-lead geometry is still approximate.
-- **Native Altium and Cadence emitters are not built yet.**
+- **A native Cadence emitter is not built yet.** KiCad and native Altium bundles are available.
+- **Vendor CAD ingestion currently accepts textual KiCad footprints.** Other vendor CAD formats
+  remain downloadable evidence but are not silently converted by a lossy parser. The import path
+  preserves arbitrary pad positions, holes and rotations; unsupported back-side copper is rejected
+  with an actionable choice instead of being mirrored implicitly.
 - **Footprint math is IPC-7351B-based**, not a full implementation of the standard. It is described
   that way deliberately.
 - **Scanned or image-only datasheets** need the model path; the text pass will report unknowns.
@@ -106,6 +130,7 @@ Stated rather than hidden.
 
 ```bash
 npm install
+python3 -m pip install -r requirements-oracles.txt # independent CAD readers used by npm test
 npm run dev
 ```
 
@@ -118,6 +143,14 @@ npm test                 # unit + integration + air-gap guard + security tests
 npx tsc --noEmit         # type check
 npm run bench:coverage   # measured RETRIEVAL coverage (add -- --live for the real chain)
 npm run bench:extraction # measured EXTRACTION coverage (add -- --fetch to populate the cache)
+npm run bench:cad-opportunity # no avoidable CAD questions + frozen blind coverage floor
+npm run bench:cad-release     # complete CAD correctness and independent-reader gate
+npm run bench:release         # full CAD + SPICE gate; requires ngspice and official LTspice
+npm run bench:model-holdout # free, offline SPICE census over all cached unseen parts
+npm run bench:model-capabilities # every generated/review/vendor route is reachable
+NGSPICE_BIN=/path/to/ngspice npm run bench:model-coverage # exhaustive SPICE gate
+npm run bench:model-holdout -- --confirm --gate # paid second read of the exact minimum panel
+NGSPICE_BIN=/path/to/ngspice LTSPICE_BIN=/path/to/LTspice npm run bench:model-release
 ```
 
 The two benchmarks answer different questions, and both matter:

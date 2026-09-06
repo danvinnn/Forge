@@ -476,6 +476,7 @@ export async function POST(request: Request) {
       review: ReviewItem[];
       /** What a person has to check; see `confirm.ts`. */
       toCheck: Confirmation[];
+      assurance: typeof readout.assurance;
       reviewPages: RenderedPage[];
     }
   >({
@@ -488,6 +489,7 @@ export async function POST(request: Request) {
     checks: readout.checks,
     review: readout.review,
     toCheck: readout.toCheck,
+    assurance: readout.assurance,
     reviewPages: readout.reviewPages
   });
 }

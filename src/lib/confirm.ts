@@ -1,8 +1,9 @@
 /**
  * THE INVARIANT.
  *
- *     No value ships silently unless two INDEPENDENT sources agree on it.
- *     Everything else is put in front of the user.
+ *     Independent agreement can clear a value, and independent disagreement
+ *     always surfaces. A lone reading is reviewed only when its own provenance
+ *     says it is uncertain.
  *
  * There is no third state and nothing falls through. "We could not confirm this"
  * is not a caveat on the rule; it is an outcome the rule already handles.
@@ -59,6 +60,7 @@ import { pinoutEvidence, type PinoutEvidence } from "./pinevidence";
 import { solderJoint, type JointReport } from "./solderjoint";
 import type { DatasheetText } from "./pdftext";
 import type { ResolvedPart } from "./types";
+import { MAX_REVIEW_ITEMS } from "./assurance";
 
 export type ConfirmState =
   /** Two independent sources agree. It ships without being mentioned. */
@@ -96,17 +98,16 @@ export interface Confirmation {
 }
 
 /**
- * How many flagged items a part may carry before it is not worth shipping.
+ * Preferred number of flagged items before the UI calls the review burden high.
  *
  * Anthony's number, 2026-08-27: "i feel like anything over 5 and the user gets
  * frustrated. so we dont want any more than 5 if possible."
  *
- * A part above it is refused WITH THE LIST rather than shipped with a dozen
- * boxes to fill in. That is what keeps the promise absolute: the user never
- * faces more than five, because past five we say this datasheet cannot be done
- * automatically instead of handing them the job back.
+ * This is not a correctness boundary. Refusing a buildable part because it has
+ * six visible notes instead of five reduces coverage without preventing a bad
+ * artefact. Contradictions and missing output inputs remain the hard boundaries.
  */
-export const MAX_FLAGGED = 5;
+export const MAX_FLAGGED = MAX_REVIEW_ITEMS;
 
 /** A value with a genuine second source behind it. */
 function confirmed(id: string, label: string, detail: string, page: number | null = null): Confirmation {
@@ -131,7 +132,7 @@ function flagged(
  * Confirmed only when EVERY pin agrees: a netlist is not partly right, and a
  * user told "44 of 48 confirmed" has to check the pinout anyway.
  */
-function confirmPinout(part: ResolvedPart, evidence: PinoutEvidence | null): Confirmation {
+function confirmPinout(part: ResolvedPart, evidence: PinoutEvidence | null): Confirmation | null {
   const id = "pinout";
   const label = "Pin names and numbering";
   const consequence =
@@ -151,6 +152,19 @@ function confirmPinout(part: ResolvedPart, evidence: PinoutEvidence | null): Con
     );
   }
   const page = evidence.pages[0] ?? null;
+  // A matching table on another page may belong to a sibling package. It is
+  // neither corroboration nor contradiction of this package's cited pinout.
+  if (part.pinCitationPage !== undefined && part.pinCitationPage !== null && !evidence.pages.includes(part.pinCitationPage)) {
+    return flagged(
+      id,
+      label,
+      "different-page-only",
+      `${evidence.agreeing.length} pin names were found beside numbers, but only on page ${evidence.pages.join(", page ")}; ` +
+        `the pin table used for this symbol cites page ${part.pinCitationPage}. That other page may describe a sibling package.`,
+      consequence,
+      part.pinCitationPage
+    );
+  }
   if (evidence.agreeing.length >= total) {
     return confirmed(
       id,
@@ -214,7 +228,7 @@ function confirmPinout(part: ResolvedPart, evidence: PinoutEvidence | null): Con
  * that outranks any band. Where it finds nothing, it has ruled out one class of
  * error and says nothing about the others, which is not a second source.
  */
-function confirmCopper(part: ResolvedPart, geometry: FootprintGeometry, joint: JointReport): Confirmation {
+function confirmCopper(part: ResolvedPart, geometry: FootprintGeometry, joint: JointReport): Confirmation | null {
   const id = "land-pattern";
   const label = "Land pattern (the pads)";
   const consequence =
@@ -240,7 +254,10 @@ function confirmCopper(part: ResolvedPart, geometry: FootprintGeometry, joint: J
   }
 
   if (corroboration.agrees) return confirmed(id, label, corroboration.detail, page);
-  return flagged(id, label, corroboration.because, corroboration.detail, consequence, page);
+  if (corroboration.because === "patterns-differ") {
+    return flagged(id, label, corroboration.because, corroboration.detail, consequence, page);
+  }
+  return null;
 }
 
 /**
@@ -250,7 +267,7 @@ function confirmCopper(part: ResolvedPart, geometry: FootprintGeometry, joint: J
  * table in the same way: the drawing counts leads and the package name states
  * them, and neither is derived from the table the pins came from.
  */
-function confirmPinCount(part: ResolvedPart): Confirmation {
+function confirmPinCount(part: ResolvedPart): Confirmation | null {
   const id = "pin-count";
   const label = "Number of pins";
   const consequence =
@@ -304,13 +321,7 @@ function confirmPinCount(part: ResolvedPart): Confirmation {
       consequence
     );
   }
-  return flagged(
-    id,
-    label,
-    "no-second-source",
-    `${part.pinCount} pins, from the pin table alone. Neither a lead count on the package outline nor a lead count in the package name was read to check it against.`,
-    consequence
-  );
+  return null;
 }
 
 /**
@@ -346,13 +357,7 @@ function confirmArrangement(part: ResolvedPart): Confirmation | null {
   const named = declaredLeadSides(part.packageType);
   const words = (count: number) => (count === 1 ? "a single row" : count === 2 ? "two rows" : `${count} sides`);
   if (named === null) {
-    return flagged(
-      id,
-      label,
-      "no-second-source",
-      `The drawing was read as ${words(sides)}, and this document's name for the package, ${part.packageType}, does not state a family that says how many sides its leads come out of.`,
-      consequence
-    );
+    return null;
   }
   if (named === sides) {
     return confirmed(id, label, `${words(sides)}, and this document names the package ${part.packageType}.`);
@@ -409,11 +414,11 @@ const BODY_AGAINST_PRINTED_LAND = 3.5;
  * to click past it. Neither is worth shipping, so the bound was dropped rather
  * than tuned.
  *
- * The printed footprint is available on 29 of 106 shipping parts and states the
- * pitch on all 29 of them. Where it is absent, this says so; that is a gap in
- * our reading of the document and it is reported as one.
+ * The printed footprint is available on only some parts. Its absence is not
+ * evidence against a cited outline reading, so it adds neither confirmation
+ * nor a review item; the reading's own provenance still controls review.
  */
-function confirmPitch(part: ResolvedPart): Confirmation {
+function confirmPitch(part: ResolvedPart): Confirmation | null {
   const id = "pitch";
   const label = "Lead pitch";
   const consequence = "Sets the spacing between pads. A wrong pitch misaligns every pin at once.";
@@ -421,9 +426,17 @@ function confirmPitch(part: ResolvedPart): Confirmation {
   if (pitchMm === null) {
     return flagged(id, label, "not-read", "No lead pitch was read from this document.", consequence);
   }
-  const printed = part.vendorLandPattern?.valuesMm ?? [];
+  const callouts = part.vendorLandPattern?.dimensions ?? [];
   const page = part.vendorLandPattern?.page ?? null;
-  if (printed.some((value) => Math.abs(value - pitchMm) <= PAD_AGREEMENT_MM)) {
+  const sides = part.dimensions.leadSides;
+  const expectedRepeats = sides === null ? null : part.pinCount - sides;
+  if (
+    expectedRepeats !== null &&
+    callouts.some(
+      (dimension) =>
+        dimension.repeat === expectedRepeats && Math.abs(dimension.valueMm - pitchMm) <= PAD_AGREEMENT_MM
+    )
+  ) {
     return confirmed(
       id,
       label,
@@ -431,27 +444,18 @@ function confirmPitch(part: ResolvedPart): Confirmation {
       page
     );
   }
-  return flagged(
-    id,
-    label,
-    printed.length > 0 ? "printed-footprint-differs" : "no-printed-footprint",
-    printed.length > 0
-      ? `${pitchMm} mm on the package outline drawing. The footprint printed on page ${page} does not state that pitch.`
-      : `${pitchMm} mm, from the package outline drawing alone. No printed footprint was read from this datasheet that states it again.`,
-    consequence,
-    page
-  );
+  return null;
 }
 
 /**
- * THE BODY, against the lead span that has to reach past it.
+ * THE BODY, checked for contradictions against the package geometry.
  *
  * The body drives the courtyard, the silkscreen outline and the 3D solid rather
- * than the copper, which is why it is one item and not three. Its second source
- * is the span: leads leave a package and end outside it, so a span read off a
- * different dimension line bounds the body from above.
+ * than the copper. Lead span and the printed footprint can expose impossible
+ * readings. A plausible cited body needs no extra flag merely because the
+ * datasheet does not print its dimensions twice.
  */
-function confirmBody(part: ResolvedPart): Confirmation {
+function confirmBody(part: ResolvedPart): Confirmation | null {
   const id = "body";
   const label = "Package body size";
   const consequence =
@@ -508,13 +512,7 @@ function confirmBody(part: ResolvedPart): Confirmation {
     );
   }
 
-  if (span && span.maxMm >= across) {
-    return confirmed(
-      id,
-      label,
-      `${length} x ${width} mm, and the ${span.minMm} to ${span.maxMm} mm lead span read from the same drawing reaches past it.`
-    );
-  }
+  if (span && span.maxMm >= across) return null;
   if (span) {
     return flagged(
       id,
@@ -524,13 +522,7 @@ function confirmBody(part: ResolvedPart): Confirmation {
       consequence
     );
   }
-  return flagged(
-    id,
-    label,
-    "no-span-to-bound-it",
-    `${length} x ${width} mm, read from one drawing and checked against nothing: no lead span was read to bound it.`,
-    consequence
-  );
+  return null;
 }
 
 /**
@@ -563,13 +555,12 @@ function confirmThermalPad(part: ResolvedPart): Confirmation | null {
       page
     );
   }
+  if (printed.length === 0) return null;
   return flagged(
     id,
     label,
-    printed.length > 0 ? "printed-pad-differs" : "no-printed-pad",
-    printed.length > 0
-      ? `${length} x ${width} mm from the package outline. The footprint printed on page ${page} does not draw a pad that size.`
-      : `${length} x ${width} mm from the package outline, and no printed footprint was read that draws the same pad.`,
+    "printed-pad-differs",
+    `${length} x ${width} mm from the package outline. The footprint printed on page ${page} does not draw a pad that size.`,
     consequence,
     page
   );

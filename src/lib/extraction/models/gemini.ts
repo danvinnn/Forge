@@ -20,7 +20,15 @@ import { callWithRetry, thinkingBudget } from "./transport";
  * the same class with an untouched budget. It is not a tuning knob: the default
  * is what production uses, and anything else has to be asked for.
  */
-function modelId(): string {
+/**
+ * The Gemini model this product calls.
+ *
+ * Exported because the SPICE second reading calls the same provider, and a
+ * second copy of this default is the "fixed in one place, not the other" shape
+ * that `LEARNINGS.md` calls the dominant failure mode here. It bit immediately:
+ * the duplicate said `gemini-2.5-flash`, which the API now refuses.
+ */
+export function modelId(): string {
   return process.env.FORGE_GEMINI_MODEL || "gemini-3.6-flash";
 }
 

@@ -10,7 +10,7 @@ function exportRequest(part: unknown, format = "kicad"): Request {
   return new Request("http://test/api/export", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ part, format })
+    body: JSON.stringify({ part, format, assurance: { evaluated: true, findings: [] } })
   });
 }
 

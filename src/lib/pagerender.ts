@@ -98,6 +98,21 @@ export const DEFAULT_RENDER_LIMITS: RenderLimits = {
   budgetMs: 15_000
 };
 
+/** Page-bound validation without rasterising the document. */
+export async function pdfPageCount(pdfBytes: ArrayBuffer): Promise<number | null> {
+  try {
+    const mupdf = await import("mupdf");
+    const document = mupdf.Document.openDocument(new Uint8Array(pdfBytes), "application/pdf");
+    try {
+      return document.countPages();
+    } finally {
+      document.destroy();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Renders the given 1-indexed pages, best effort.
  *

@@ -40,6 +40,25 @@ export const RESPONSE_MARGIN_MS = 3_000;
 export const MIN_MODEL_BUDGET_MS = 5_000;
 
 /**
+ * How long a full read of a whole datasheet actually takes.
+ *
+ * Not a limit and not enforced anywhere. It exists so that a change to some
+ * OTHER constant - the retrieval chain's ceiling, a route's `maxDuration` - can
+ * be checked against what a model call costs, instead of against
+ * `MIN_MODEL_BUDGET_MS`, which only asks whether a call is worth STARTING.
+ *
+ * That distinction is the whole reason this is here. `worthAsking` returning
+ * true means a call will be made; it says nothing about whether the call will
+ * finish, and a call abandoned on the deadline has already been paid for. So the
+ * budget arithmetic has to be sized against a typical call, not a minimum one.
+ *
+ * The number: measured at about ninety seconds for the whole-document pass, the
+ * same figure `/api/lookup` cites in the comment above its `worthAsking` gate
+ * and the same total `readprogress.ts` proportions its four stages across.
+ */
+export const TYPICAL_MODEL_CALL_MS = 90_000;
+
+/**
  * What is left for the model, given the route's whole budget and what has been
  * spent so far. May be negative, which the caller reads as "do not ask".
  *

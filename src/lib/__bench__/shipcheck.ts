@@ -119,6 +119,8 @@ function answerFor(need: RequiredInput, record: PartRecord, designator?: string)
       return span(dims.leadSpanMm.value) ?? body + 1;
     case "formedLeadContactMm":
       return span(dims.leadContactMm.value) ?? 0.6;
+    case "mounting":
+      return dims.mounting.value ?? "smd";
   }
 }
 

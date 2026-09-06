@@ -18,9 +18,8 @@
  *
  * ## Why it is also a second source, not just a solder check
  *
- * The rule this product works to is that no value ships silently unless two
- * INDEPENDENT sources agree, where independent means read by different means.
- * The lands and the leads qualify:
+ * Independent sources are valuable where they exist, and independent means
+ * read by different means. The lands and the leads qualify:
  *
  *     the LANDS come from the recommended footprint the vendor printed
  *     the LEADS come from the package outline drawing

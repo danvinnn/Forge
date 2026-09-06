@@ -62,7 +62,7 @@ import { callWithRetry, thinkingBudget } from "./transport";
  */
 
 /** The Google Cloud project that gets billed. Not the display name. */
-function project(): string {
+export function vertexProject(): string {
   return process.env.FORGE_VERTEX_PROJECT ?? "";
 }
 
@@ -73,7 +73,7 @@ function project(): string {
  * Override it to pin a region when data residency requires it, knowing that
  * doing so drops the reachable models to 2.5-flash and below.
  */
-function location(): string {
+export function vertexLocation(): string {
   return process.env.FORGE_VERTEX_LOCATION || "global";
 }
 
@@ -88,7 +88,7 @@ function location(): string {
  * 404s, which is the correct loud failure rather than a silent downgrade to an
  * older model.
  */
-function modelId(): string {
+export function vertexModelId(): string {
   return process.env.FORGE_VERTEX_MODEL || process.env.FORGE_GEMINI_MODEL || "gemini-3.6-flash";
 }
 
@@ -108,7 +108,7 @@ export class VertexExtractionModel implements ExtractionModel {
     // The model id ALWAYS goes in the name here, defaulted or not, because the
     // Vertex default differs from the AI Studio one. Leaving it out would let
     // two genuinely different models share a cache key.
-    modelId(),
+    vertexModelId(),
     thinkingBudget() === null ? null : `think${thinkingBudget()}`
   ]
     .filter(Boolean)
@@ -123,7 +123,7 @@ export class VertexExtractionModel implements ExtractionModel {
    * assumption that produces a confusing bill.
    */
   isConfigured(): boolean {
-    return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS && project());
+    return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS && vertexProject());
   }
 
   async extract(request: ExtractionRequest): Promise<ExtractionResult> {
@@ -133,14 +133,14 @@ export class VertexExtractionModel implements ExtractionModel {
         "GOOGLE_APPLICATION_CREDENTIALS is not set. Vertex authenticates with a service account JSON, not an API key."
       );
     }
-    if (!project()) {
+    if (!vertexProject()) {
       throw new ExtractionModelError(
         "config",
         "FORGE_VERTEX_PROJECT is not set. It must be the Google Cloud project ID, which is lowercase and often carries digits, not the project's display name."
       );
     }
 
-    const ai = new GoogleGenAI({ vertexai: true, project: project(), location: location() });
+    const ai = new GoogleGenAI({ vertexai: true, project: vertexProject(), location: vertexLocation() });
 
     // Text first, then the renders in page order. The prompt names the pages and
     // says they are attached in that order, so the two must not diverge.
@@ -155,7 +155,7 @@ export class VertexExtractionModel implements ExtractionModel {
 
     return callWithRetry("Vertex extraction", async () => {
       const response = await ai.models.generateContent({
-        model: modelId(),
+        model: vertexModelId(),
         contents: [{ role: "user", parts }],
         config: {
           // temperature 0: measured on AD8232 with an identical prompt, five

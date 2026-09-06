@@ -72,6 +72,7 @@ import { promptFingerprint } from "./modelcache";
 import { defect } from "./inject";
 import { buildCachedParts } from "./oracle-match";
 import type { PartRecord } from "../types";
+import { sameOutlineCode } from "../packagevariants";
 
 loadBenchEnv();
 
@@ -268,8 +269,8 @@ interface Silent {
  * Matched by the package's own caption, because that is the only identity an
  * entry carries before the merge has run.
  */
-function perPackageAnswered(part: string): Array<{ packageType: string; field: string; value: unknown }> {
-  const out: Array<{ packageType: string; field: string; value: unknown }> = [];
+function perPackageAnswered(part: string): Array<{ packageType: string; outlineCode?: string; field: string; value: unknown }> {
+  const out: Array<{ packageType: string; outlineCode?: string; field: string; value: unknown }> = [];
   const seen = new Set<string>();
   const current = promptFingerprint();
   for (const file of readdirSync(CACHE)) {
@@ -277,7 +278,11 @@ function perPackageAnswered(part: string): Array<{ packageType: string; field: s
     let entry: {
       prompt?: string;
       result?: {
-        packagesInThisDocument?: Array<{ packageType?: string; dimensions?: Record<string, { value?: unknown }> }>;
+        packagesInThisDocument?: Array<{
+          packageType?: string;
+          outlineCode?: string;
+          dimensions?: Record<string, { value?: unknown }>;
+        }>;
       };
     };
     try {
@@ -293,10 +298,10 @@ function perPackageAnswered(part: string): Array<{ packageType: string; field: s
         if (!field.startsWith("dimensions.")) continue;
         if (!(extractionFields as readonly string[]).includes(field)) continue;
         if (held?.value === null || held?.value === undefined) continue;
-        const key = `${packageType}|${field}`;
+        const key = `${packageType}|${table.outlineCode ?? ""}|${field}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push({ packageType, field, value: held.value });
+        out.push({ packageType, outlineCode: table.outlineCode, field, value: held.value });
       }
     }
   }
@@ -349,7 +354,9 @@ async function fieldPass(): Promise<boolean> {
     for (const held of perPackageAnswered(entry.part)) {
       answered += 1;
       const table = (entry.record.packagesInThisDocument ?? []).find((offered) =>
-        sameCaption(offered.packageType, held.packageType)
+        held.outlineCode
+          ? sameOutlineCode(offered.outlineCode, held.outlineCode)
+          : sameCaption(offered.packageType, held.packageType)
       );
       const field = held.field.slice("dimensions.".length);
       const stored = table?.dimensions?.[field as keyof NonNullable<typeof table.dimensions>] as
@@ -357,6 +364,13 @@ async function fieldPass(): Promise<boolean> {
         | undefined;
       if (stored && stored.value !== null && stored.value !== undefined) {
         kept += 1;
+        continue;
+      }
+      const refusal = entry.rejected.find(
+        (item) => item.field === held.field && item.reason.includes(`package "${held.packageType}"`)
+      );
+      if (refusal) {
+        named.set(refusal.reason, (named.get(refusal.reason) ?? 0) + 1);
         continue;
       }
       silent.push({

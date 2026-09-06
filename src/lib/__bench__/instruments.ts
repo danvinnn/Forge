@@ -53,6 +53,8 @@ interface Instrument {
    * being watched, so the run can insist the injected number is HIGHER.
    */
   read: (output: string) => number;
+  /** A missing external executable is NOT evidence that a detector is dead. */
+  available?: (output: string) => boolean;
   /** Minutes, roughly, so a caller knows what they are starting. */
   slow?: boolean;
 }
@@ -152,6 +154,22 @@ const INSTRUMENTS: Instrument[] = [
       (count(/CONFIRMED AND THE ORACLE DISAGREES\s+(\d+)/)(output) || 0) +
       (count(/CONFIRMED AND THE DRAWING DISAGREES\s+(\d+)/)(output) || 0),
     slow: true
+  },
+  {
+    bench: "model",
+    inject: "spice.model",
+    defect: "every emitted SPICE model had a class-specific parameter corrupted",
+    read: count(/\bpass\s+\d+\s+fail\s+(\d+)/),
+    available: (output) => !/ngspice unavailable|NO DATA: nothing could be checked/i.test(output),
+    slow: true
+  },
+  {
+    bench: "model-holdout",
+    inject: "spice.model-holdout",
+    defect: "every hold-out SPICE model had a class-specific parameter corrupted",
+    read: count(/\bpass\s+\d+\s+fail\s+(\d+)/),
+    available: (output) => !/ngspice unavailable|NO DATA: nothing could be checked/i.test(output),
+    slow: true
   }
 ];
 
@@ -194,7 +212,12 @@ function main(): void {
 
   const broken: string[] = [];
   for (const one of chosen) {
-    const clean = one.read(run(one.bench, null));
+    const cleanOutput = run(one.bench, null);
+    if (one.available && !one.available(cleanOutput)) {
+      console.log(`  ${one.bench.padEnd(12)} ${"n/a".padStart(7)} ${"n/a".padStart(9)}   NOT RUN   (required simulator unavailable)`);
+      continue;
+    }
+    const clean = one.read(cleanOutput);
     const dirty = one.read(run(one.bench, one.inject));
     const works = Number.isFinite(clean) && Number.isFinite(dirty) && dirty > clean;
     if (!works) broken.push(`${one.bench}: ${one.defect}`);
@@ -225,7 +248,7 @@ function main(): void {
 
   console.log("");
   if (broken.length === 0) {
-    console.log("  Every instrument above went red when the thing it watches was broken.\n");
+    console.log("  Every available instrument above went red when the thing it watches was broken.\n");
     return;
   }
   for (const line of broken) console.log(`  CANNOT FIRE  ${line}`);

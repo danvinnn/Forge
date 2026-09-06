@@ -27,12 +27,38 @@ import { logger } from "../logging";
 // than to be slow and then say no. The budget is checked between resolvers rather than enforced
 // mid-flight, so a single resolver can still overshoot by its own timeout; per-call AbortControllers
 // in http.ts bound that.
-// 12s, not 25s, and configurable. This has to sit UNDER the host's function timeout or the platform
+// 45s, raised from 12s on 2026-09-04, and configurable.
+//
+// ## Why it was 12s, and why that was wrong
+//
+// The original reasoning was that this must sit UNDER the host's function timeout or the platform
 // kills the request first and the user gets a 504 instead of our clean DATASHEET_NOT_FOUND, which
-// throws away the graceful degradation the whole chain is built around. Many serverless defaults are
-// 10 to 15 seconds, so the default is chosen to fit inside the smaller of those with headroom for
-// the response. Raise it with FORGE_CHAIN_BUDGET_MS on a host that allows longer requests.
-const DEFAULT_BUDGET_FALLBACK_MS = 12_000;
+// throws away the graceful degradation the whole chain is built around. That reasoning is still
+// right. The NUMBER was picked to fit inside a 10-to-15 second serverless default, which is not the
+// host this product declares: `/api/lookup` and `/api/parse` both set `maxDuration = 150`.
+//
+// Then it was measured, assembling the SPICE amplifier corpus (`SPICE.md` Part IX). Of 28 parts the
+// chain reached 21 at 12 seconds and 27 at 60. SIX OF THE SEVEN MISSES WERE TIME, NOT ABSENCE: they
+// had `budgetExhausted: true` in the log all along, and the answer was within reach. The product was
+// telling users to upload a datasheet it could have found.
+//
+// ## What bounds it now
+//
+// Not a guess about somebody's serverless default, but the arithmetic of the route that calls this,
+// asserted in `extraction/__tests__/budget.test.ts`:
+//
+//   chain budget + RESPONSE_MARGIN_MS + TYPICAL_MODEL_CALL_MS  <=  maxDuration * 1000
+//
+// A chain that spends its whole budget must still leave a full model call inside the route's own
+// ceiling, because overrunning does not produce a slow answer - it produces a 504 that throws away a
+// record which had already succeeded. At 45s that leaves 102s for a call measured at about 90.
+//
+// The trade is real and it is a trade: a part that genuinely has no datasheet now takes 45 seconds
+// to say so instead of 12. That is the wrong shape for a person waiting at a prompt and the right
+// one for a lookup that would otherwise wrongly demand an upload, and coverage was measured to win.
+// Lower it with FORGE_CHAIN_BUDGET_MS on a host with a shorter function timeout - and if you do,
+// lower `maxDuration` with it or the relationship above no longer holds.
+const DEFAULT_BUDGET_FALLBACK_MS = 45_000;
 
 export function resolveChainBudgetMs(): number {
   const raw = Number(process.env.FORGE_CHAIN_BUDGET_MS);

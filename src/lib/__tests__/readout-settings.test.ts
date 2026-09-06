@@ -77,7 +77,7 @@ function flatpack(): PartRecord {
       landSpanCrossMm: nothing(),
       leadSides: cited<2 | 4>(2),
       leadForm: cited<"gullwing" | "nolead" | "straight">("straight"),
-      mounting: nothing<"smd" | "through-hole">(),
+      mounting: cited<"smd" | "through-hole">("smd"),
       leadDiameterMm: nothing<number>(),
       holeDiameterMm: nothing<number>(),
       vacantLeadSlot: nothing(),

@@ -155,6 +155,22 @@ export const citationSchema = z.object({
   region: textRegionSchema.nullable()
 });
 
+const vendorLandPatternSchema = z.object({
+  page: z.number().int().positive(),
+  valuesMm: z.array(z.number().positive()).max(64),
+  dimensions: z
+    .array(z.object({ repeat: z.number().int().positive().nullable(), valueMm: z.number().positive() }))
+    .max(64)
+    .optional()
+});
+
+export interface VendorLandEvidence {
+  page: number;
+  valuesMm: number[];
+  /** Kept so repeated pitch callouts are distinguishable from unrelated values. */
+  dimensions?: Array<{ repeat: number | null; valueMm: number }>;
+}
+
 /**
  * Wraps every extracted value with its provenance. A value that could not be
  * determined is `null` with a null confidence, method, and citation, so an
@@ -602,10 +618,7 @@ export const partSchema = z.object({
    * document draws nothing".
    */
   drawnPackages: z.array(z.string().min(1).max(64)).max(32).optional(),
-  vendorLandPattern: z
-    .object({ page: z.number().int().positive(), valuesMm: z.array(z.number().positive()).max(64) })
-    .nullable()
-    .default(null),
+  vendorLandPattern: vendorLandPatternSchema.nullable().default(null),
   pinCount: extracted(z.number().int().positive()),
   pins: extracted(z.array(pinSchema)),
   /**
@@ -642,9 +655,7 @@ export const partSchema = z.object({
          * that builds the footprint - which is how `drawnPackages` lost its check
          * on every export. See the type for what this is.
          */
-        vendorLandPattern: z
-          .object({ page: z.number().int().positive(), valuesMm: z.array(z.number().positive()).max(64) })
-          .optional(),
+        vendorLandPattern: vendorLandPatternSchema.optional(),
         /**
          * Optional since 2026-08-18. A document routinely prints an outline
          * drawing per package while tabulating ONE pinout, and such an entry
@@ -878,7 +889,7 @@ export type PartRecord = {
      * whose callouts could not be read is recorded with an empty list, which is a
      * different statement from no footprint and is one the user can act on.
      */
-    vendorLandPattern?: { page: number; valuesMm: number[] };
+    vendorLandPattern?: VendorLandEvidence;
     /** Absent on an entry that carries measurements and no pinout. */
     pins?: PinRecord[];
     exposedPad?: boolean;
@@ -899,7 +910,7 @@ export type PartRecord = {
   /** JEDEC outline registration, e.g. `MO-153 AA`. Vendor-independent package identity. */
   jedecOutline: Extracted<string>;
   packageVariants: PackageVariantRecord[];
-  vendorLandPattern: { page: number; valuesMm: number[] } | null;
+  vendorLandPattern: VendorLandEvidence | null;
   pinCount: Extracted<number>;
   pins: Extracted<PinRecord[]>;
   /** True when a reader saw a non-numbered terminal. Blocks the footprint, not the pinout. */
@@ -943,9 +954,11 @@ export interface ResolvedPart {
   packageOutlineCode: string | null;
   jedecOutline: string | null;
   /** The land pattern the datasheet prints for this package, in mm. */
-  vendorLandPattern: { page: number; valuesMm: number[] } | null;
+  vendorLandPattern: VendorLandEvidence | null;
   pinCount: number;
   pins: PinRecord[];
+  /** Page the primary pin-table read cites, for independent corroboration. */
+  pinCitationPage?: number | null;
   /**
    * One pin table per package, where the document describes more than one.
    *
@@ -977,7 +990,7 @@ export interface ResolvedPart {
      */
     alsoKnownAs?: string[];
     /** See the identical field on `PartRecord`. Per package, for the same reason. */
-    vendorLandPattern?: { page: number; valuesMm: number[] };
+    vendorLandPattern?: VendorLandEvidence;
     /** Absent on an entry that carries measurements and no pinout. */
     pins?: PinRecord[];
     exposedPad?: boolean;
@@ -1152,6 +1165,7 @@ export function resolveForExport(part: PartRecord, options: ResolveOptions = {})
       vendorLandPattern: part.vendorLandPattern,
       pinCount: pinCount as number,
       pins,
+      pinCitationPage: part.pins.citation?.page ?? null,
       packagesInThisDocument: part.packagesInThisDocument,
       drawnPackages: part.drawnPackages,
       exposedPad: part.exposedPad,

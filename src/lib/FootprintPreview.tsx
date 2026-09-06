@@ -1,5 +1,10 @@
 "use client";
 
+// Moved from `src/app/` to `src/lib/` on 2026-09-03. Both screens draw it, and
+// the shared record panel draws it too; a component under `src/lib` may not
+// import from `src/app`, so leaving it there would have inverted the layering
+// this project keeps for the air gap. It imports only React and `./geometry`.
+
 /**
  * THE FOOTPRINT, DRAWN.
  *
@@ -36,7 +41,7 @@
  */
 
 import { useMemo, useState } from "react";
-import type { FootprintGeometry } from "../lib/geometry";
+import type { FootprintGeometry } from "./geometry";
 
 /** Millimetres of clear space around the courtyard, so nothing touches the frame. */
 const MARGIN_MM = 0.6;

@@ -80,6 +80,7 @@ async function benchModel(): Promise<CachingModel | null> {
 }
 
 async function main(): Promise<void> {
+  const gate = process.argv.includes("--gate");
   if (!existsSync(CORPUS)) {
     console.log(`\nNo corpus at ${CORPUS}. Nothing to measure.\n`);
     return;
@@ -104,6 +105,7 @@ async function main(): Promise<void> {
   const shipped: Array<{ part: string; designator: string; questions: number }> = [];
   let read = 0;
   let ships = 0;
+  let shipsAnswered = 0;
   let uncached = 0;
 
   for (const file of files) {
@@ -159,6 +161,18 @@ async function main(): Promise<void> {
     if (doc) record = withPrintedFootprint(record, doc);
 
     const outcome = await shipOutcome(record, BENCH_SETTINGS);
+    // TWO NUMBERS, BECAUSE THERE ARE TWO QUESTIONS.
+    //
+    // This counted `outcome.ships` alone and printed it as SHIPS, while
+    // `bench:holdout` prints `outcome.shipsAnswered` under the same label. So
+    // 58% and 97% sat in two reports as though comparable and they measure
+    // different products: one is "upload and press export", the other is "after
+    // the user answers what no datasheet states".
+    //
+    // That is the 2026-08-22 defect, in a third bench that was never migrated,
+    // and it understates this corpus badly: every one of the 14 parts counted as
+    // a failure here is a part that ships the moment a question is answered.
+    if (outcome.shipsAnswered) shipsAnswered += 1;
     if (!outcome.ships) {
       shipRefusals.set(outcome.why, [...(shipRefusals.get(outcome.why) ?? []), name]);
       continue;
@@ -210,7 +224,14 @@ async function main(): Promise<void> {
 
   const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
   console.log(`\nREAD   ${read}/${files.length} (${pct(read, files.length)}%)`);
-  console.log(`SHIPS  ${ships}/${files.length} (${pct(ships, files.length)}%) of all, ${pct(ships, read)}% of those read`);
+  console.log(
+    `SHIPS  ${shipsAnswered}/${files.length} (${pct(shipsAnswered, files.length)}%)  <- with the customer's ` +
+      `settings and their answers. THE PRODUCT, and the same definition bench:holdout prints.`
+  );
+  console.log(
+    `       ${ships}/${files.length} (${pct(ships, files.length)}%) unaided: upload, press export, done. ` +
+      `${pct(ships, read)}% of those read.`
+  );
   if (uncached > 0) console.log(`\n  ${uncached} part(s) had no cached answer and the run was offline.`);
 
   if (flagged.length > 0) {
@@ -255,6 +276,25 @@ async function main(): Promise<void> {
     );
   }
   console.log("");
+
+  if (gate) {
+    const failures: string[] = [];
+    const readRate = files.length > 0 ? read / files.length : 0;
+    const safeRate = files.length > 0 ? shipsAnswered / files.length : 0;
+    const worstReview = Math.max(...flagged, 0);
+    if (files.length !== 43) failures.push(`expected all 43 frozen documents, saw ${files.length}`);
+    if (uncached > 0) failures.push(`${uncached} document(s) had no current cached reading`);
+    if (readRate < 0.90) failures.push(`READ ${(readRate * 100).toFixed(1)}% is below 90%`);
+    if (safeRate < 0.80) failures.push(`safe completion ${(safeRate * 100).toFixed(1)}% is below 80%`);
+    if (worstReview > 5) failures.push(`a shipping result requires ${worstReview} review actions`);
+    if (failures.length > 0) {
+      console.error("CAD blind release gate failed:");
+      for (const failure of failures) console.error(`  - ${failure}`);
+      process.exitCode = 1;
+    } else {
+      console.log("CAD blind release gate passed: complete frozen corpus, coverage floors met, and review stayed bounded.\n");
+    }
+  }
 }
 
 if (process.argv[1]?.endsWith("blind.ts")) {

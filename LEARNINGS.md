@@ -5592,3 +5592,530 @@ A `+15` bonus for `datasheet` in a candidate URL was meant to prefer a vendor's
 aggregator DOMAINS like `datasheetspdf.com`, which is the opposite of the intent. Scoring the
 path only changes one URL in seven measured, so it is a correctness-of-intent fix rather than
 a coverage win, and the comment says so.
+
+# The SPICE half, measured against a hold-out for the first time (2026-09-04)
+
+## The instrument, not a second copy of it
+
+`bench:model` and `bench:model-holdout` share `spicerun.ts`. The two runners
+differ only in which directory the PDFs come from and what the header says.
+
+Two corpora scored by two copies of a measurement is "fixed in one place, not
+the other" wearing a new costume: the copies drift, and the drift shows up as a
+generalisation gap that is really a bench difference. The hold-out is not a
+second instrument, it is the same one pointed somewhere else.
+
+It refuses to run if any part is in both corpora, rather than warning.
+
+## A class-average hid the finding, and the split was the finding
+
+The first honest hold-out number was 44% built against 90% tuned, which reads as
+a catastrophe. Split by device class it is two different facts:
+
+- op-amps 8 of 11, a 17-point generalisation gap and a real result;
+- comparators, in-amps and references 0 of 8, a coverage boundary the product
+  had never claimed to cross.
+
+Two thirds of the "miss" was a class the feature does not model, refusing
+honestly. **Report the denominator you are actually measuring.** Same lesson as
+`forge-extent-is-not-a-span`, in a new place.
+
+## An allowlist of printed phrasings, again
+
+All three op-amp misses refused for the same reason: an open-loop gain that was
+PRINTED, whose wording was outside `vocab.ts`'s regular expression. The numbers
+were read. Only the name was missing.
+
+Adding three phrasings would have turned the hold-out into a second training set.
+The fix that is not tuning: the product already takes a second reading of the
+same table from the rendered page on every request, so ASK IT WHICH QUANTITY
+EACH ROW STATES. That is a naming question about text on the page, it costs one
+more field in a reply already paid for, and it degrades to today's behaviour when
+the answer is null.
+
+The model supplies the NAME and never the number, so the value still has two
+readings agreeing on it; only the identity is single-source, and it is flagged
+with the row's printed description and page.
+
+## A second reading may not overrule the first, but it may lose to it
+
+Naming rows the vocabulary could not immediately caused a regression: a
+model-named row displaced a vocabulary-named one and took two conformance checks
+from pass to unverifiable, because the displaced row carried the test conditions.
+
+A row BOTH readings named now outranks one only the model named. That is not
+ranking readers - the rule this project has broken and paid for repeatedly - it
+is preferring the better-attested identity among rows that all claim to be the
+same parameter.
+
+## A screen no instrument has ever loaded
+
+`bench:browser` loaded `/`. The SPICE intent lives on `/suite`, which nothing in
+the repository had ever opened. Four defects, found on the first run:
+
+- `/api/identify` did not exist; every upload 404'd and the component swallowed it;
+- a SPICE run spent a full CAD parse it does not need, then read the document again;
+- the model button was disabled by a package problem, for an artefact with no package;
+- the panel that should show the receipt said "Netlist panel goes here."
+
+None of these is subtle. All four survived a typecheck, a build, a route test and
+1000 unit tests, because **a route handler does not care whether a browser ever
+ran the page that calls it.** Every screen needs one instrument that presses its
+buttons.
+
+## The bench must not grep its own product's prose
+
+`bench:model` recovered a refusal's CLASS from the refusal SENTENCE with a
+regular expression. The refusal was then reworded to name every device class, and
+the grep went on reporting an amplifier's missing gain-bandwidth for a voltage
+reference. The build now returns the class as a slug beside the sentence.
+
+## A dead check is not a check, and switching one on needs a measurement first
+
+`ParameterSpec.dimension` and `DIMENSION_UNITS` were declared, documented as
+"This REJECTS", and read by nothing. Before switching them on, the question is
+not "is the rule right" but "what does it do to the corpus": measured, 404 rows
+agree, 28 contradict, and 87 carry a unit this reader cannot parse at all.
+
+So it rejects only on PROOF - a unit that parses and contradicts - and never on a
+unit it fails to parse. Refusing the 87 would have deleted correct readings to
+satisfy a check, which is how `forge-fourth-arrangement` destroyed correct
+figures. The 28 were genuine: a slew rate in pF, a quiescent current in ohms.
+
+## Rank pages by what a specification looks like, not by how many rows are on them
+
+The second reading pays to render pages, and `tablePagesOf` chose them by row
+count. A Typical Characteristics page comes out of the text layer as rows whose
+"unit" is another axis label, so a page of graphs outranked a real continuation
+page: LM358 rendered two graph pages and dropped three continuation pages;
+REF5025 spent half its budget on graphs.
+
+Ranking by rows carrying a unit that SCALES fixed it. Deliberately not by whether
+the vocabulary could name the row: naming is what the second reading is asked to
+help with, and ranking on it would starve the pages it is needed for.
+
+## The verifier had its own idea of when a value counts
+
+`usable()` is the one definition the emitter asks. `verify` asked
+`valueAt(...) !== null` per corner instead. A parameter with a value at one
+corner and not at every corner produces no element, and the rig went on measuring
+it, reporting a model as disagreeing with its own datasheet by its whole offset.
+
+That is the LMP7704-SP presence-versus-usability defect a second time, in the one
+other place that had a private notion of "present". **When a definition is
+described as "the one definition", grep for the places that reimplemented it.**
+
+## Reading a new device class starts with what the page prints, not with a topology
+
+The voltage reference class looked like a vocabulary problem and was a UNIT
+problem. Every value on REF5025's specification page had no unit at all: a table
+with two column groups is typeset over two header lines, UNIT on the first and
+MIN TYP MAX on the second, and a reader that takes one line at a time accepts the
+second and comes back with no unit column. Fifteen rows, none usable.
+
+Enumerate what the document prints before designing anything. The bottleneck is
+rarely where the plan says it is.
+
+## A requirement that is really a disjunction should be written as one
+
+`required: ["outputVoltage"]` would have built a voltage reference out of any
+amplifier that prints a row called `Output voltage`. What no amplifier prints is
+a line or load regulation, and either one suffices, so the requirement is
+`outputVoltage AND (lineRegulation OR loadRegulation)` and the type says so.
+Fudging a disjunction into an AND-list is how a class gets chosen wrongly, and a
+wrongly chosen class produces a model that simulates cleanly and describes a
+different device. No conformance check can catch that: they verify against the
+numbers the class chose.
+
+## Do not subtract two printed numbers when the answer is the difference (2026-09-04)
+
+A voltage reference's line regulation moves a 2.5 V output by 2.5 µV per volt.
+The conformance rig printed both operating points and subtracted them in
+TypeScript: a stated 1.0 ppm/V came back as 0.8 ppm/V, a 20% error that was
+entirely the simulator's print precision. `let d = v(b)-v(a)` inside the deck
+takes every reference check from 0.32% to 0.0000%.
+
+It was found by writing a test for the emitter's OTHER branch. The tuned part
+states both regulation terms, so the no-load-regulation path had never once been
+run, and the branch that had never run was the one that made the error visible.
+
+## A route written later does not inherit the earlier route's discipline
+
+`/api/parse` declares `maxDuration` and races its model pass against a budget,
+discarding the model leg when it expires. `/api/model`, written months later,
+declared nothing at all and had no race: a slow second reading killed the whole
+request and returned a generic failure, when the deterministic reading alone can
+always produce a model.
+
+**When a route grows a second sibling, diff it against the first for the things
+the first learned the hard way** - budget, race, degrade path, size check before
+buffering, rate limit. Three of those five had been copied. The two that had not
+were the two that only fail in deployment.
+
+## A structural rule can be right and still have one blind spot (2026-09-04)
+
+`readHeader` requires a TYP column, because a typical is what tells an Electrical
+Characteristics table from an Absolute Maximum Ratings one without trusting a
+heading, and there is no such thing as a typical maximum rating. Sound reasoning,
+and the blind spot was this product's own market: a QML military table prints
+MIN and MAX only, so LM139AQML-SP read **zero rows** with its whole table on the
+page.
+
+The fix is not to drop the rule. It is to name what the typical was standing in
+for - "this is a characterisation" - and accept the other evidence for it, which
+is a section heading that says so. Nothing is admitted on structure alone that
+was not admitted before.
+
+**When a check refuses everything from a whole class of document, ask what it was
+really testing for, not whether it is correct.**
+
+## `limit()` in an ngspice B-source is accepted and silently wrong
+
+ngspice takes `limit(x,0,1)` in a behavioural source, evaluates it to something
+else, and reports nothing. The comparator's pull-down stayed on, the output never
+left its saturation voltage, and **the model simulated perfectly cleanly while
+doing nothing at all**. `max(0,min(1,x))` is plain SPICE and means the same in
+both tools.
+
+Same run, same symptom, different cause: a gain of two that should not have been
+there turned the output stage into a negative resistance. A matched termination
+halves a step only when the SOURCE has a series impedance of Z0.
+
+Neither is visible to anything that asks whether a file parses, and neither
+showed up as an error. Both were found by writing the deck to a file, running it
+by hand, and printing the nodes. **For a generated netlist, "it ran" is not a
+result - print an internal node and look at it.**
+
+## Rank by evidence, not by how few things are missing
+
+With a third device class, every failing op-amp began reporting
+`comparator:propagationDelay`, because a comparator requires one parameter and an
+amplifier requires two, so the comparator was always "closer". NJM4580, which
+states neither a gain nor a gain-bandwidth, was filed under the comparator class.
+
+A class is closest only when the document supplied PART of what it needs.
+Otherwise the honest slug is `no-class-matched`. **A slug that groups a bench's
+findings has to group them by something true, or the census sends the next person
+to the wrong place.**
+
+## A timeout is not a miss, and the log said so all along
+
+Six of seven amplifiers the retrieval chain could not find had logged
+`budgetExhausted: true`: the chain ran out of TIME rather than out of places to
+look. The 12-second budget is right for a person who has typed a part number and
+wrong for assembling a corpus, where nobody is waiting. Raised in the corpus
+fetch alone - **21 of 28 cached to 27 of 28** - with the product's budget
+untouched, so `bench:retrieval-holdout` still measures what a user gets.
+
+The finding about the product is real and is the user's call: raising it trades a
+longer wait for coverage. What was wrong was reading a timeout as absence for
+weeks, with the reason in every log line.
+
+## A bigger denominator makes the number worse and the measurement better
+
+The SPICE hold-out went from 71% to 63% built by CACHING SIX MORE PARTS. Four of
+the six refuse. Nothing regressed; the corpus went from 21 of 28 to 27 of 28, and
+the number now describes almost all of a list chosen before anything was opened
+rather than the three quarters of it that happened to download.
+
+
+# The regulator class, and six reading defects it uncovered (2026-09-04)
+
+## A near-miss veto has a direction, and only one of them is evidence
+
+`symbolContradicts` refused a row when the printed symbol was a near miss of one
+we accept, in EITHER direction. Only one direction is evidence.
+
+`IQSD` printed against an accepted `IQ` is a real contradiction: the page's
+symbol carries a qualifier ours does not, and that qualifier is what makes it a
+different row. A shutdown current read as a supply current is a factor of a
+thousand.
+
+`Vd` printed against an accepted `VDO` is the opposite and proves nothing. The
+page's symbol is SHORTER than ours, so it is our vocabulary being more verbose
+than the document, not the document naming something narrower. A symbol carrying
+less information cannot single out a different parameter.
+
+Both directions vetoed until today, and it cost a whole device class: `Vd` is how
+ST writes a dropout voltage on four regulator datasheets, and `Id` is how it
+writes a quiescent current. Every one of those rows was read correctly, matched
+its description, carried the right unit, and was then thrown away. LM139AQML-SP,
+a part in the TUNED corpus, was losing its open-loop gain the same way.
+
+**The general form: when a rule fires on a similarity, ask which side is more
+specific. Evidence flows one way.**
+
+## The same words in a different unit are a different quantity
+
+A voltage reference states line regulation as a SLOPE, `1 ppm/V`. A regulator
+states a CHANGE over a range printed beside it, `50 mV` at `VI = 7.5 to 25 V`.
+Same description, four orders of magnitude apart, and neither convertible into
+the other without reading the range out of the test conditions.
+
+One vocabulary entry per description would have put `50 mV` on the record as
+50000 ppm/V - silently, on a model that simulates perfectly and passes every
+check, because the check compares against the number the reader chose.
+
+So the description narrows a row to a set of candidates and **the printed unit
+picks one**. Promoted only when the unit positively fits the alternative, never
+on absence, which is the rule everywhere else in this reader.
+
+## The same rule, asked in two places, will disagree
+
+`headingAccepts` allows a short lead-in before the section name, so that
+`LM133 883 Electrical Characteristics` is admitted. `scopeOf` demanded the name
+at position zero. Both read the same line.
+
+So `Table 3. Electrical characteristics of L7805A` was ACCEPTED as a heading and
+yielded NO SCOPE. The sixteen per-voltage tables in a 78xx family datasheet, each
+captioned with its own part number, all merged into one block, and whichever row
+sorted first silently became the part. A 5 V regulator and a 24 V one, every
+value read correctly, and nothing downstream able to tell.
+
+"Fixed in one place, not the other" with the two places three hundred lines apart
+in the same file. The fix was not a second rule; it was the same rule, asked once.
+
+## When one document describes sixteen parts, the caption is evidence
+
+Having split those blocks, something has to choose between them. The existing
+posture - present the choice, never pick - is right and was not enough: a
+fallback to the first block is a coin flip.
+
+A block whose scope NAMES the part that was asked for is the document itself
+saying which table describes this part. Using it is a READ, not a pick. Ignoring
+it would be throwing away evidence in order to look neutral.
+
+Two blocks naming one part is the document declining to discriminate, and that
+goes back to the user, which is what the alternatives list is for.
+
+## A relation is not always written with an ASCII operator
+
+Test conditions are recognised by the relational operator in them. Maxim writes
+`250mV <= VOUT <=` with U+2264, and a matcher looking only for `[=<>]` read that
+as the row's own DESCRIPTION.
+
+The cost: MAX44242's open-loop gain row - min 134, typ 145 dB - was filed under
+the parameter name `250mV <= VOUT <=`. The gain was taken from an offset-current
+sub-row instead, and the model shipped with an **open-loop gain of 25 dB**.
+
+Every conformance check passed except one. The offset came back 5% low, because a
+unity-gain follower at 25 dB attenuates its own offset by exactly that ratio.
+**A check on an unrelated parameter was the only thing in the product that
+noticed**, and it noticed because the model reproduces whatever it was given and
+the two numbers then disagree with each other.
+
+Same shape as `foldUnicode`: the glyph a vendor chose is not the glyph a naive
+matcher expects, and this is a reader of other people's typesetting.
+
+## A discriminator the neighbouring class also states is not a discriminator
+
+The regulator class was separated from the reference by the dropout voltage, on
+the reasoning that a reference has no pass element to drop across. Measured: a
+low-dropout SERIES reference states one, and both voltage references in the
+amplifier hold-out were built as regulators. Correct values, every check passing,
+the wrong kind of device named on the receipt and drawn on the symbol.
+
+What separates them is the CONVENTION each states its regulation in - the ppm
+slope above - which the reader was already distinguishing for a different reason.
+
+**A class boundary drawn from what a document states needs a counter-example hunt
+before it is believed, not just a plausible story about why no member of the
+other class would state it.**
+
+## The corpus knew, and nothing asked it
+
+Every hold-out part carries a hand-written device class, recorded before the
+datasheet was opened. It sat unused while the misclassification above ran, and
+the bench that would have caught it in one line was already loading the field.
+
+An expectation written down before the evidence is an independent witness. If a
+corpus carries one, the instrument should compare against it - as a
+DISAGREEMENT, because a hand-written oracle can also just be wrong.
+
+## Sort a report by importance, not by count
+
+The hold-out bench prints the ten most common reasons a check did not pass. The
+corpus had three failures and thirty unverifiables, and the failures did not make
+the list: a model disagreeing with its own datasheet was invisible under ten
+copies of "the datasheet does not state enough of the test circuit".
+
+Every failure is now printed, always, and the unverifiables fill what is left.
+Truncating the interesting half to keep the output short is how an instrument
+stops being able to report the thing it exists for.
+
+## Say whether a missing value was missing or unusable
+
+`opamp:openLoopGain` in a refusal census meant two different things: the
+datasheet states no gain, and the datasheet states one this model cannot use.
+The second happens when a value exists at some corners and not at every corner
+the block expresses, which is a real rule - a corner expression with a hole in it
+emits no `.param` and the netlist references something it never declared.
+
+Reported as one slug, it sends whoever reads the census hunting a vocabulary gap
+when the row was read, named and understood. The slug now says which, and the
+answer decided what NOT to work on: all three remaining gain refusals are
+genuinely absent from the record, so the corner rule is not what is costing them.
+
+## Measured negative: letting a valued row donate its label
+
+A labelled row that carries its own values is excluded from donating its label to
+an orphan sub-row. That is wrong for Maxim's layout, where a parameter's first
+sub-row sits ON the label line and the rest beneath it, so the orphans attach to
+the NEXT parameter's label.
+
+Letting such a row compete on distance instead was tried and measured across
+nineteen datasheets: it moves row attribution on twelve of them, in both
+directions. AD8628 loses its supply rejection entirely, OPA2277 drops from three
+offset-voltage rows to one, LMP7704-SP loses its input voltage range. Some of
+those may be improvements and there is no oracle here that can say which.
+
+Reverted. The phantom row it leaves does not ship, because the block builder
+prefers a candidate carrying a typical value and the correct row has one.
+
+## A source file with a NUL byte in it disappears from `grep`
+
+`model.ts` joined a composite key on a literal NUL, which is a sound technique: it
+is the one character that cannot appear in text read off a page. Written as a
+literal byte rather than as an escape, it made the file BINARY to `file`, `grep`
+and everything that asks them, so searching the codebase silently skipped it.
+
+Found by a grep for an exported constant returning nothing while the file plainly
+contained it. Escape it.
+
+## Lint the product, not the scratch pad
+
+`.scratch` holds one-off inspection scripts, is gitignored, and is explicitly
+never part of the product. It was not in the ESLint ignore list, so a throwaway
+`any` in a five-line PDF dumper turned `npm run lint` red on a change that
+touched nothing shipped. A lint failure that is not about the product teaches
+people to skip lint.
+
+
+## An instrument that flagged the explanation of its own finding
+
+`document-claims.test.ts` refuses any sentence asserting what a document does
+NOT contain, because "no recommended footprint was found in this datasheet" was
+once shown beside the page that printed it. Its header says plainly that a
+COMMENT may quote the forbidden wording, so the reason survives beside the code
+that used to say it.
+
+It skipped a line starting with `*` or `/*`, which covers a JSDoc block and
+misses the shape `.tsx` uses most: `{/* ... */}` wrapped over several lines,
+whose continuation lines start with ordinary prose. So the comment explaining
+why a sentence had been reworded was itself reported as the offence.
+
+An instrument that flags the explanation of its own finding teaches people to
+delete the explanation. Block comments are now tracked, and the check was proved
+still live by putting the bad wording back into CODE and watching it go red.
+
+## A negative claim in a comment is still worth getting right
+
+The same pass wrote `which a modern LDO datasheet states nowhere` in a comment -
+a claim about every LDO datasheet, from a sample of fourteen. Comments are
+exempt from the guard and should not be exempt from the standard: the measured
+sentence, `seven of fourteen state an accuracy and no nominal`, is shorter, is
+true, and tells the next reader how much to trust it.
+
+## Ask for what the document does not have, and mark it forever after
+
+Seven of fourteen regulator datasheets state no nominal output voltage anywhere:
+on a fixed LDO the voltage is an ordering option and the number lives in the
+part-number suffix. Decoding that suffix is not available - `-1.8` means 1.8 V on
+one vendor and `3302` means 3.3 V on another - so the choice was refuse or ask.
+
+Asking took the regulator hold-out from 23% to 85%. What made it safe was not
+the question but the four rules around it:
+
+1. **The askable list has exactly one entry.** Each entry must clear a bar: the
+   document genuinely does not state it, the person holding the part knows it
+   without looking anything up, and getting it wrong is obvious. A box inviting
+   somebody to type an open-loop gain would turn this product into the thing it
+   exists to replace.
+2. **A supplied value gets no page.** `page` became nullable and null means
+   nobody read it. Every citation in this product is `page N`; printing one
+   beside a number a person typed is fabricating provenance.
+3. **A value the document states is never overwritten.** The user is answering a
+   question asked because the page was silent. If it was not silent, the
+   question should not have been asked.
+4. **The question is not offered where the answer would be ignored.** "The page
+   is silent" and "the page states one this model cannot use" are different
+   refusals, and only the first is liftable. A question whose answer goes
+   nowhere is worse than the refusal it decorates.
+
+And the bench answers its own question with a deliberately implausible 7.77 V,
+purely to find out WHICH refusal each part is - then throws the model away. A
+model built from a number the bench invented reproduces it perfectly, and
+counting those checks would be the bench marking its own homework.
+
+## A designed refusal must render in the state that owns its question
+
+`/api/model` correctly returned 422 with an answerable output-voltage question.
+The screen stored the refusal and question, then moved back to `identified`.
+Both were rendered only in the `done` body, so the wire contract was right and
+the user saw neither result. The browser bench found the route response and an
+empty screen at the same time.
+
+A refusal is a completed read. If its next action is an answer, the state that
+renders answers must admit a refusal even when no artefact was built.
+
+## Provider selection is part of a second reading
+
+The extraction factory preferred Vertex when service-account credentials were
+configured. The SPICE second reader independently checked only the AI Studio
+API key, so the same deployment used one provider for CAD and another for model
+corroboration. When the prepaid API balance ran dry, the first worked and the
+second silently degraded to a single reading.
+
+Any path that calls the same model must share provider preference, model ID,
+endpoint and spend accounting. Sharing only the model's name is not sharing the
+decision.
+
+## A pre-call spend ceiling can cross its printed number
+
+The ceiling checks the ledger before a call. The call's token count and price
+exist only afterwards, so the call that starts just below the ceiling can finish
+above it. A release run capped at $17.77 ended at $17.7827.
+
+That mechanism is a stop-before-next-call ceiling, not a hard reservation. Name
+it that way, and leave headroom when an external instruction supplies a strict
+maximum.
+
+## A table header may be one logical row on two baselines
+
+Renesas specification tables place MIN/MAX on one text baseline and TYP/UNIT
+roughly ten PDF points below. Treating each baseline as a complete row produced
+zero values even though every token was present. Reconstruct a header from only
+adjacent header-shaped baselines inside a tight geometric bound; merging nearby
+arbitrary text turns test conditions into columns.
+
+## A subsection heading does not necessarily replace its scope
+
+`AC SPECIFICATIONS` and `DC SPECIFICATIONS` describe bands inside the supply
+condition printed immediately above them. Resetting scope on either heading put
+open-loop gain and gain-bandwidth in different blocks, so neither block could
+build. Scope transitions need semantic rules as well as typographic ones.
+
+## A vendor-model link and a vendor-model claim are different things
+
+A manufacturer's product page is safe to call “product resources.” It is not
+evidence that a downloadable simulation model exists. Only exact resources that
+were checked may be labelled as known models. Supplied files also need terminal
+mapping to refuse unfamiliar or extra pins; a simulator accepting a guessed pin
+order proves syntax, not identity.
+
+## A union of printed corners is not a model's corner set
+
+Corner provenance is global: if any table row prints a minimum, the record has
+a minimum. Topology support is joint: every required parameter must resolve at
+the corner the model emits. Treating those as the same set made an LDO with a
+min/max-only output voltage unusable merely because another row printed a
+typical. Compute a per-class intersection from required parameters, retain the
+larger provenance set, and never synthesize the missing corner.
+
+## Exhaust coverage dimensions, not the budget
+
+A 400-part paid hold-out can repeat the same vendor layout hundreds of times
+while missing one staggered header. Declare the independent risk cells, solve
+minimum set cover exactly, and keep the full deterministic census free. The
+small panel proves breadth; it does not estimate prevalence, so never gate its
+percentage as though it were a random sample.

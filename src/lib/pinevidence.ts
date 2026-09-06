@@ -4,11 +4,9 @@
  *
  * ## Why this exists
  *
- * The product's rule is that no value ships silently unless two independent
- * sources agree on it. For every dimension there is a second source already in
- * hand - IPC-7351B arithmetic, the printed footprint, the neighbouring numbers
- * on the same drawing. For the PINOUT there was none. One model read produced
- * the names, nothing checked them, and they were emitted as a netlist.
+ * A second source can independently strengthen the model-read pin table and,
+ * more importantly, expose contradictions. One model read used to produce the
+ * names with nothing checking them before they were emitted as a netlist.
  *
  * Every wrong netlist this project has shipped was of that shape: LT1013's
  * names, OPA2277's swapped 7 and 8, STM32F407VG's twenty-two pins shifted by
@@ -683,16 +681,31 @@ export function pinoutEvidence(
   // that is closed, the page that "supplied" pin 1 no longer does. So this stays
   // as it was, on the measurement rather than on the argument: the fix that
   // reads well and buys nothing is the expensive kind of wrong.
+  // One page must carry the complete agreement. Pooling partial tables from
+  // different pages can assemble a pinout that no independent source actually
+  // states; mutation testing found rotated netlists surviving that union.
+  const byPage = new Map<number, Set<number>>();
+  for (const match of matches) {
+    const onPage = byPage.get(match.page) ?? new Set<number>();
+    for (const number of match.agreeing) onPage.add(number);
+    byPage.set(match.page, onPage);
+  }
+  const completePages = new Set(
+    [...byPage].filter(([, numbers]) => numbers.size >= claimed.size).map(([page]) => page)
+  );
+  const accepted = completePages.size > 0 ? matches.filter((match) => completePages.has(match.page)) : [];
+
   const agreeing = new Set<number>();
   const dissent = new Map<number, PinDissent>();
   const pages = new Set<number>();
-  for (const match of matches) {
+  for (const match of accepted) {
     pages.add(match.page);
     for (const number of match.agreeing) agreeing.add(number);
     for (const item of match.dissenting) dissent.set(item.number, item);
   }
   if (process.env.FORGE_KEEP_DISSENT !== "1") for (const number of agreeing) dissent.delete(number);
 
+  if (agreeing.size === 0) return null;
   return {
     pages: [...pages].sort((left, right) => left - right),
     agreeing: [...agreeing].sort((left, right) => left - right),

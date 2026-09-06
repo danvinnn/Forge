@@ -150,6 +150,12 @@ in `confirm.ts` is a reading against a DIFFERENT KIND of reading:
 | the pitch | the package outline drawing | the printed footprint drawing |
 | the body | the body dimensions | the lead span that has to reach past them |
 | the thermal pad | the outline's D2 and E2 | the printed footprint's own pad |
+| a SPICE parameter block | text-layer table geometry, `spice/specs.ts` | a model reading the rendered table pages, `spice/read-model.ts` |
+
+A parameter a person corrects while the cited rendered page is open records
+that human review explicitly. It does not masquerade as agreement between the
+two machine readings, and a value merely typed because the document is silent
+is still marked supplied rather than confirmed.
 
 Two of those pairings are weaker than the rest and the difference is written down
 rather than glossed. The BODY's two readings are callouts on one drawing, so the
@@ -159,7 +165,20 @@ document prints it, on 42 of 62 parts; the rest are stated as unconfirmed. And t
 COPPER's overlay flags without confirming, because a clean overlay rules out one
 class of error and not the others.
 
-### A value nothing can pair is named, not quietly shipped
+### A second source strengthens evidence; its absence is not a defect
+
+A traceable, high-confidence reading that passes every applicable consistency
+and output invariant may ship without being printed twice in the datasheet.
+Independent agreement promotes it to confirmed. Independent disagreement is
+always surfaced. Low-confidence, image-only, and untraceable model readings are
+reviewed according to their own provenance. This keeps uncertainty visible
+without manufacturing uncertainty from the absence of redundant documentation.
+
+Pinouts are the measured exception. The holdout contains high-confidence,
+cited pin tables that still disagree with hand-read ground truth, so a symbol
+without an independent numbering check remains review-gated. That guard exists
+because it catches demonstrated wrong netlists, not because every field must
+have two sources.
 
 The pin ELECTRICAL TYPE has no second source and is not going to get one. Its only
 candidate is the pin name, and reading a type out of a name is the invention this
@@ -172,16 +191,24 @@ drives something that reaches a board.
 A pairing that cannot name two different means is not a confirmation. Say so
 rather than inventing one.
 
-### The unit is a GLANCE, and there is a hard budget
+### The unit is a GLANCE, not a refusal threshold
 
 A flagged item is something a person settles by looking at one page once, so the
 pinout is ONE item whether the part has 8 pins or 144.
 
-**No part may ship with more than five.** Anthony's number, 2026-08-27: past five
-the product has stopped saving anyone time. A package that would need more is
-refused with the list of what could not be confirmed, never shipped with a dozen
-boxes to fill in. `MAX_FLAGGED` in `confirm.ts` is the number and `optionFor` is
-where the refusal happens.
+Five remains the preferred review budget: above it the interface should say the
+review burden is high. It is not evidence that an artefact is wrong, so it is
+not a refusal threshold. Refusing a buildable part because it needs six visible
+checks instead of five would reduce theoretical coverage without improving
+correctness.
+
+The shared decision has four actionable outcomes. A proven contradiction
+refuses. Missing input or a real choice asks the user and builds only after the
+answer. Review items remain visible and travel with the artefact, regardless of
+count. No finding means ready. A fifth evidence state, `limitation`, is
+disclosed: for example, a datasheet that gives no slew-rate test fixture leaves
+that behavior unverifiable, but there is no question a user can answer and no
+contradictory measurement to resolve.
 
 ### A bound that cannot fail is not a confirmation
 
@@ -242,3 +269,22 @@ So:
 - Generation stays deterministic. The model reads; it does not compute geometry.
 - Controlled datasheets never leave the customer environment. Enforced
   structurally, not by a runtime check.
+
+## Recovery order
+
+An unavailable generated artefact is not yet a refusal. Forge first exhausts
+automatic recovery that can preserve provenance: alternate reads of the
+unresolved region, official manufacturer resources, and an existing vendor CAD
+or SPICE artefact. An official file is evidence, not authority; its terminals,
+copper and executable text pass the same boundary checks as generated output.
+
+Only then does Forge ask. A question names the smallest fact that changes the
+output, shows the relevant source page when one exists, carries the engineering
+unit or a finite set of recognizable choices, validates the answer immediately,
+and records that the user supplied or corrected it. Uploading a vendor file and
+correcting a reading are actions in this same recovery path, not an "expert
+mode" with weaker guarantees.
+
+Forge refuses only when the information still cannot support a correct
+artefact after those routes. It never turns a refusal into success by assuming
+a package, terminal meaning, dimension, operating condition or model behavior.

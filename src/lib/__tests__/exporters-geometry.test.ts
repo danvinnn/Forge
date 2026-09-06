@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
 import { createExportZip, FootprintUnavailableError, GeneratorUnavailableError } from "../exporters";
+import { assessAssurance } from "../assurance";
 import { type PinRecord, type ResolvedPart } from "../types";
 
 // A footprint is a manufacturing instruction. These tests are about the two ways
@@ -116,6 +117,65 @@ test("dual-row pads are numbered counterclockwise, not down both sides", async (
   assert.equal(four.y, five.y, "pin 4 and pin 5 sit on the same row");
   assert.ok(four.y > one.y, "numbering runs down the left side");
   assert.ok(five.y > eight.y, "and back UP the right side, which is the whole point");
+});
+
+test("user-supplied CAD values never masquerade as datasheet readings", async () => {
+  const part = soicPart();
+  const baseline = await createExportZip(part, "kicad", { generatedAt: new Date("2026-01-01T00:00:00Z") });
+  const supplied = {
+    landPadLengthMm: baseline.footprint.padLengthMm,
+    landPadWidthMm: baseline.footprint.padWidthMm,
+    landSpanMm: baseline.footprint.centreToCentreMm
+  };
+  const assurance = assessAssurance({
+    findings: [{
+      id: "land-pattern",
+      label: "Land pattern",
+      state: "review",
+      detail: "The user supplied the copper dimensions."
+    }]
+  });
+  const bundle = await createExportZip(part, "kicad", {
+    supplied,
+    assurance,
+    generatedAt: new Date("2026-01-01T00:00:00Z")
+  });
+  assert.deepEqual(bundle.footprint.userSupplied, supplied);
+  assert.equal(bundle.footprint.corroboration.from, "user");
+  assert.equal(bundle.footprint.corroboration.against, null);
+  assert.equal(bundle.footprint.corroboration.agrees, false);
+
+  const zip = await JSZip.loadAsync(bundle.buffer);
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  assert.deepEqual(manifest.footprint.userSupplied, supplied);
+  assert.equal(manifest.releaseAssurance.outcome, "review");
+  assert.match(manifest.footprint.source, /user-supplied inputs/i);
+  assert.doesNotMatch(manifest.footprint.corroboration.detail, /printed in this datasheet/i);
+});
+
+test("an unread mounting style is asked, never interpreted as surface mount", async () => {
+  const uncertain = soicPart();
+  uncertain.dimensions = { ...uncertain.dimensions, leadForm: null, mounting: null };
+  await assert.rejects(
+    () => createExportZip(uncertain, "kicad"),
+    (error: Error) => {
+      const failure = error as FootprintUnavailableError;
+      assert.deepEqual(failure.needs.map((need) => need.field), ["mounting"]);
+      assert.deepEqual(failure.needs[0].choices?.map((choice) => choice.value), ["smd", "through-hole"]);
+      return true;
+    }
+  );
+
+  const built = await createExportZip(uncertain, "kicad", {
+    supplied: {
+      mounting: "smd",
+      landPadLengthMm: 1.5,
+      landPadWidthMm: 0.6,
+      landSpanMm: 5.4
+    }
+  });
+  assert.equal(built.footprint.userSupplied?.mounting, "smd");
+  assert.equal(built.footprint.corroboration.from, "user");
 });
 
 test("the symbol places every pin on the side its number belongs to", async () => {
@@ -324,7 +384,7 @@ function cfpPart(): ResolvedPart {
     packageType: "14-lead CFP",
     pinCount: 14,
     pins: pins(14),
-    dimensions: { ...soicPart().dimensions, leadForm: "straight" }
+    dimensions: { ...soicPart().dimensions, leadForm: "straight", mounting: "smd" }
   });
 }
 
@@ -581,6 +641,11 @@ test("supplying the pad size builds the part, with no second read of the datashe
     supplied: { thermalPadLengthMm: 2.15, thermalPadWidthMm: 1.2 }
   });
   assert.ok(out.files.length > 0);
+  assert.deepEqual(out.footprint.userSupplied, {
+    thermalPadLengthMm: 2.15,
+    thermalPadWidthMm: 1.2
+  });
+  assert.equal(out.footprint.corroboration.from, "user");
 });
 
 test("a sized exposed pad becomes a real land, numbered after the leads", async () => {

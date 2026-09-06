@@ -10,8 +10,9 @@
  * themselves?
  *
  * The answer used to be "all of them or none of them, and nobody knows which".
- * `confirm.ts` states the rule - no value ships silently unless two independent
- * sources agree on it - and this measures the consequence.
+ * `confirm.ts` combines independent checks with the original reading's
+ * provenance. This measures both the remaining review burden and whether a
+ * value accepted without review disagrees with hand-read ground truth.
  *
  * Anthony's gate, 2026-08-27:
  *
@@ -41,6 +42,9 @@ import { thermalPadNumber } from "../geometry";
 import { confirmations, MAX_FLAGGED, type Confirmation } from "../confirm";
 import { buildFootprintGeometry } from "../exporters";
 import { densityOf } from "../settings";
+import { assessCadAssurance } from "../cad-assurance";
+import { collectReviewItems, shownRecord } from "../review";
+import { userEdited } from "../provenance";
 
 loadBenchEnv();
 
@@ -51,10 +55,13 @@ interface Row {
   items: Confirmation[];
   /** Oracle verdict on the pinout, where a hand-read one exists. */
   pinoutTruth: "agrees" | "DISAGREES" | null;
-  pinoutState: Confirmation["state"];
+  pinoutState: Confirmation["state"] | "accepted";
   /** Oracle verdict on the COPPER, where a hand-read footprint exists. */
   copperTruth: "agrees" | "DISAGREES" | null;
-  copperState: Confirmation["state"];
+  copperState: Confirmation["state"] | "accepted";
+  /** Everything the shared release policy still asks the user to review. */
+  reviewCount: number;
+  reviewLabels: string[];
 }
 
 /**
@@ -156,6 +163,25 @@ async function main(): Promise<void> {
 
     const doc = await documentFor(entry.part);
     const report = confirmations(part, geometry, doc);
+    // Review the package that actually shipped. Family records deliberately
+    // keep their flat dimensions empty, so reviewing that flat projection would
+    // measure a different package from the one whose copper is under test.
+    const shown = shownRecord(entry.record, outcome.shippedAs?.designator ?? part.packageType);
+    const reviewedRecord = {
+      ...entry.record,
+      // Reaching an offered package is a user choice in the product, not a
+      // model claim. Do not charge the assurance budget for asking again which
+      // package they just chose.
+      packageType: userEdited(part.packageType),
+      dimensions: shown.dimensions,
+      pins: { ...entry.record.pins, value: shown.pins }
+    };
+    const assurance = assessCadAssurance(part, report, collectReviewItems(reviewedRecord));
+    const stateFor = (id: string): Confirmation["state"] | "accepted" => {
+      const checked = report.items.find((item) => item.id === id);
+      if (checked) return checked.state;
+      return assurance.review.some((item) => item.id === id) ? "flagged" : "accepted";
+    };
 
     // A CONFIRMED READING THAT IS ACTUALLY WRONG, which is the one outcome the
     // two zeros below claim never happens - and neither counter had ever been
@@ -203,35 +229,38 @@ async function main(): Promise<void> {
       flagged: report.flagged,
       items: report.items,
       pinoutTruth,
-      pinoutState: report.items.find((item) => item.id === "pinout")!.state,
+      pinoutState: stateFor("pinout"),
       copperTruth: copperAgreesWithDrawing(part, truthGeometry),
-      copperState: report.items.find((item) => item.id === "land-pattern")!.state
+      copperState: stateFor("land-pattern"),
+      reviewCount: assurance.review.length,
+      reviewLabels: assurance.review.map((finding) => finding.label)
     });
   }
 
-  rows.sort((left, right) => right.flagged.length - left.flagged.length || left.part.localeCompare(right.part));
+  rows.sort((left, right) => right.reviewCount - left.reviewCount || left.part.localeCompare(right.part));
 
   console.log(`\nFLAGGED VALUES PER PART, over ${rows.length} shipping parts\n`);
   const histogram = new Map<number, number>();
-  for (const row of rows) histogram.set(row.flagged.length, (histogram.get(row.flagged.length) ?? 0) + 1);
-  const highest = Math.max(...rows.map((row) => row.flagged.length), 0);
+  for (const row of rows) histogram.set(row.reviewCount, (histogram.get(row.reviewCount) ?? 0) + 1);
+  const highest = Math.max(...rows.map((row) => row.reviewCount), 0);
   for (let count = 0; count <= highest; count += 1) {
     const parts = histogram.get(count) ?? 0;
     const share = rows.length > 0 ? Math.round((parts / rows.length) * 100) : 0;
     console.log(`  ${count} flagged  ${String(parts).padStart(3)} parts  ${String(share).padStart(3)}%  ${bar(parts, 60)}`);
   }
 
-  const total = rows.reduce((sum, row) => sum + row.flagged.length, 0);
-  const clean = rows.filter((row) => row.flagged.length === 0).length;
-  const over = rows.filter((row) => row.flagged.length > MAX_FLAGGED);
+  const total = rows.reduce((sum, row) => sum + row.reviewCount, 0);
+  const clean = rows.filter((row) => row.reviewCount === 0).length;
+  const over = rows.filter((row) => row.reviewCount > MAX_FLAGGED);
   const mean = rows.length > 0 ? total / rows.length : 0;
   console.log("");
-  console.log(`  worst part        ${highest}                   gate: never above ${MAX_FLAGGED}   ${highest <= MAX_FLAGGED ? "MET" : "MISSED"}`);
+  console.log(`  worst candidate   ${highest}`);
+  console.log(`  preferred maximum ${MAX_FLAGGED}                   ${highest <= MAX_FLAGGED ? "MET" : "EXCEEDED (visible, not refused)"}`);
   console.log(`  nothing to check  ${clean}/${rows.length} (${Math.round((clean / Math.max(1, rows.length)) * 100)}%)      gate: 80%              ${clean / Math.max(1, rows.length) >= 0.8 ? "MET" : "MISSED"}`);
   console.log(`  average per part  ${mean.toFixed(2)}                gate: under 1.00       ${mean < 1 ? "MET" : "MISSED"}`);
   if (over.length > 0) {
-    console.log(`\n  ${over.length} part(s) over the budget and therefore REFUSED:`);
-    for (const row of over) console.log(`    ${row.part} (${row.flagged.length})`);
+    console.log(`\n  ${over.length} part(s) above the preferred review budget:`);
+    for (const row of over) console.log(`    ${row.part} (${row.reviewCount}): ${row.reviewLabels.join(", ")}`);
   }
 
   console.log(`\nWHAT IS FLAGGED, by value\n`);
@@ -273,14 +302,15 @@ async function main(): Promise<void> {
   // is the one outcome that would make the whole mechanism worse than nothing:
   // it is a wrong netlist that the product has told the user not to check.
   const judged = rows.filter((row) => row.pinoutTruth !== null);
-  const falseConfirm = judged.filter((row) => row.pinoutState === "confirmed" && row.pinoutTruth === "DISAGREES");
+  const silentWrong = judged.filter((row) => row.pinoutState !== "flagged" && row.pinoutTruth === "DISAGREES");
   const falseFlag = judged.filter((row) => row.pinoutState === "flagged" && row.pinoutTruth === "agrees");
   console.log(`\nPINOUT CONFIRMATION against ${judged.length} hand-read pinouts\n`);
   console.log(`  confirmed and the oracle agrees      ${judged.filter((r) => r.pinoutState === "confirmed" && r.pinoutTruth === "agrees").length}`);
-  console.log(`  CONFIRMED AND THE ORACLE DISAGREES   ${falseConfirm.length}   <- a wrong netlist we told nobody to check`);
+  console.log(`  accepted from traceable evidence     ${judged.filter((r) => r.pinoutState === "accepted" && r.pinoutTruth === "agrees").length}`);
+  console.log(`  SILENTLY ACCEPTED BUT DISAGREES      ${silentWrong.length}   <- a wrong netlist we told nobody to check`);
   console.log(`  flagged and the oracle disagrees     ${judged.filter((r) => r.pinoutState === "flagged" && r.pinoutTruth === "DISAGREES").length}`);
   console.log(`  flagged though the oracle agrees     ${falseFlag.length}   <- a glance we did not have to ask for`);
-  for (const row of falseConfirm) console.log(`    FALSE CONFIRMATION  ${row.part} (${row.designator})`);
+  for (const row of silentWrong) console.log(`    SILENT WRONG  ${row.part} (${row.designator})`);
   if (falseFlag.length > 0) {
     console.log(`  asked unnecessarily: ${falseFlag.map((row) => row.part).join(", ")}`);
   }
@@ -292,23 +322,31 @@ async function main(): Promise<void> {
   // pattern that does not match its own hand-read drawing is wrong copper the
   // product told nobody to check.
   const measured = rows.filter((row) => row.copperTruth !== null);
-  const falseCopper = measured.filter((row) => row.copperState === "confirmed" && row.copperTruth === "DISAGREES");
+  const silentWrongCopper = measured.filter((row) => row.copperState !== "flagged" && row.copperTruth === "DISAGREES");
   const falseCopperFlag = measured.filter((row) => row.copperState === "flagged" && row.copperTruth === "agrees");
   console.log(`\nCOPPER CONFIRMATION against ${measured.length} hand-read footprints\n`);
   console.log(`  confirmed and the drawing agrees     ${measured.filter((r) => r.copperState === "confirmed" && r.copperTruth === "agrees").length}`);
-  console.log(`  CONFIRMED AND THE DRAWING DISAGREES  ${falseCopper.length}   <- wrong copper we told nobody to check`);
+  console.log(`  accepted from traceable evidence     ${measured.filter((r) => r.copperState === "accepted" && r.copperTruth === "agrees").length}`);
+  console.log(`  SILENTLY ACCEPTED BUT DISAGREES      ${silentWrongCopper.length}   <- wrong copper we told nobody to check`);
   console.log(`  flagged and the drawing disagrees    ${measured.filter((r) => r.copperState === "flagged" && r.copperTruth === "DISAGREES").length}`);
   console.log(`  flagged though the drawing agrees    ${falseCopperFlag.length}   <- a glance we did not have to ask for`);
-  for (const row of falseCopper) console.log(`    FALSE CONFIRMATION  ${row.part} (${row.designator})`);
+  for (const row of silentWrongCopper) console.log(`    SILENT WRONG  ${row.part} (${row.designator})`);
 
   console.log(`\nEVERY PART, worst first\n`);
   for (const row of rows) {
-    console.log(`  ${String(row.flagged.length)}  ${row.part.padEnd(18)} ${row.designator.slice(0, 26).padEnd(27)} ${row.flagged.map((item) => item.id).join(" ")}`);
+    console.log(`  ${String(row.reviewCount)}  ${row.part.padEnd(18)} ${row.designator.slice(0, 26).padEnd(27)} ${row.reviewLabels.join(" · ")}`);
   }
 
   if (unshipped.length > 0) {
     console.log(`\nNOT MEASURED, because nothing shipped to measure (${unshipped.length})\n`);
     for (const line of unshipped) console.log(`  ${line}`);
+  }
+
+  // Release invariants, not dashboard numbers. A false confirmation is a
+  // wrong artefact Forge told the user they did not need to inspect. Review
+  // volume is measured above but is not evidence of incorrectness.
+  if (silentWrong.length > 0 || silentWrongCopper.length > 0) {
+    process.exitCode = 1;
   }
 }
 

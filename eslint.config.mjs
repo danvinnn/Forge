@@ -19,7 +19,10 @@ import tsPlugin from "@typescript-eslint/eslint-plugin";
  */
 export default [
   {
-    ignores: [".next/**", "node_modules/**", "next-env.d.ts", "tools/**", "scratchpad/**"]
+    // `.scratch` is one-off inspection scripts, gitignored and never part of the
+    // product. Linting them turns a throwaway `any` in a five-line dumper into a
+    // red build on a change that touched nothing shipped.
+    ignores: [".next/**", "node_modules/**", "next-env.d.ts", "tools/**", "scratchpad/**", ".scratch/**"]
   },
   js.configs.recommended,
   {

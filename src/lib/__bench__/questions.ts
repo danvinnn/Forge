@@ -106,6 +106,7 @@ function oracleHolds(entry: DimensionOracleEntry, field: RequiredInput["field"])
     case "leadDiameterMm":
     case "leadsPerSide":
     case "vacantLeadSlot":
+    case "mounting":
     case "formedLeadSpanMm":
     case "formedLeadContactMm":
       return null;
@@ -127,7 +128,7 @@ function oracleHolds(entry: DimensionOracleEntry, field: RequiredInput["field"])
  * reported as UNJUDGED and they are a schema gap to close.
  */
 const SETTING_FIELDS = new Set<string>(["formedLeadSpanMm", "formedLeadContactMm"]);
-const UNHOLDABLE = new Set<string>(["leadDiameterMm", "leadsPerSide", "vacantLeadSlot"]);
+const UNHOLDABLE = new Set<string>(["leadDiameterMm", "leadsPerSide", "vacantLeadSlot", "mounting"]);
 
 /**
  * Did the MODEL return this field, under the prompt in force today?

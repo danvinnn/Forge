@@ -181,12 +181,17 @@ function silkscreenOutline(geometry: FootprintGeometry): string[] {
   if (!(halfWidthMm > 0) || !(halfHeightMm > 0)) return [];
 
   /** Pad extents grown by the required clearance. */
-  const blockers = geometry.pads.map((pad) => ({
-    x0: pad.centre.xMm - pad.widthMm / 2 - SILK_TO_PAD_MM,
-    x1: pad.centre.xMm + pad.widthMm / 2 + SILK_TO_PAD_MM,
-    y0: pad.centre.yMm - pad.heightMm / 2 - SILK_TO_PAD_MM,
-    y1: pad.centre.yMm + pad.heightMm / 2 + SILK_TO_PAD_MM
-  }));
+  const blockers = geometry.pads.map((pad) => {
+    const angle = ((pad.rotationDeg ?? 0) * Math.PI) / 180;
+    const xExtent = (Math.abs(Math.cos(angle)) * pad.widthMm + Math.abs(Math.sin(angle)) * pad.heightMm) / 2;
+    const yExtent = (Math.abs(Math.sin(angle)) * pad.widthMm + Math.abs(Math.cos(angle)) * pad.heightMm) / 2;
+    return {
+      x0: pad.centre.xMm - xExtent - SILK_TO_PAD_MM,
+      x1: pad.centre.xMm + xExtent + SILK_TO_PAD_MM,
+      y0: pad.centre.yMm - yExtent - SILK_TO_PAD_MM,
+      y1: pad.centre.yMm + yExtent + SILK_TO_PAD_MM
+    };
+  });
 
   const lines: string[] = [];
 
@@ -365,7 +370,7 @@ export function emitKicadFootprint(geometry: FootprintGeometry, links: KicadLink
       // makes a copper pour connect to it solidly instead of through the thermal
       // relief spokes a normal pad gets, which would undo the point of the pad.
       lines.push(
-        `  (pad "${kicadString(pad.number)}" smd ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}) (size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (property pad_prop_heatsink) (layers "F.Cu" "F.Mask")${maskMargin(pad)} (zone_connect 2) (roundrect_rratio 0.25))`
+        `  (pad "${kicadString(pad.number)}" smd ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}${pad.rotationDeg ? ` ${mm(pad.rotationDeg)}` : ""}) (size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (property pad_prop_heatsink) (layers "F.Cu" "F.Mask")${maskMargin(pad)} (zone_connect 2) (roundrect_rratio 0.25))`
       );
       for (const aperture of pad.pasteApertures) {
         // An EMPTY pad number, which is how the reference library spells a
@@ -396,14 +401,14 @@ export function emitKicadFootprint(geometry: FootprintGeometry, links: KicadLink
         throw new Error(`Pad ${pad.number} is through-hole with no drill size, so no footprint is written.`);
       }
       lines.push(
-        `  (pad "${kicadString(pad.number)}" thru_hole ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}) ` +
+        `  (pad "${kicadString(pad.number)}" thru_hole ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}${pad.rotationDeg ? ` ${mm(pad.rotationDeg)}` : ""}) ` +
           `(size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (drill ${mm(pad.drillMm)}) (layers "*.Cu" "*.Mask")` +
           `${maskMargin(pad)} (remove_unused_layers no)${pad.shape === "roundrect" ? " (roundrect_rratio 0.25)" : ""})`
       );
       continue;
     }
     lines.push(
-      `  (pad "${kicadString(pad.number)}" smd ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}) (size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (layers "F.Cu" "F.Paste" "F.Mask")${maskMargin(pad)}${pad.shape === "roundrect" ? " (roundrect_rratio 0.25)" : ""})`
+      `  (pad "${kicadString(pad.number)}" smd ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}${pad.rotationDeg ? ` ${mm(pad.rotationDeg)}` : ""}) (size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (layers "F.Cu" "F.Paste" "F.Mask")${maskMargin(pad)}${pad.shape === "roundrect" ? " (roundrect_rratio 0.25)" : ""})`
     );
   }
 

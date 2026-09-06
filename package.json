@@ -43,7 +43,17 @@
     "bench:instruments": "tsx src/lib/__bench__/instruments.ts",
     "bench:outputs": "tsx src/lib/__bench__/outputs.ts",
     "bench:kicad": "tsx src/lib/__bench__/kicad.ts",
-    "bench:altium": "tsx src/lib/__bench__/altium.ts"
+    "bench:states": "tsx src/lib/__bench__/states.ts",
+    "bench:altium": "tsx src/lib/__bench__/altium.ts",
+    "bench:cad-opportunity": "npm run bench:questions && npm run bench:blind -- --offline --gate",
+    "bench:cad-release": "npm run bench:cad-opportunity && npm run bench:confirm && npm run bench:outputs && npm run bench:mutation && npm run bench:kicad && npm run bench:altium",
+    "bench:model": "tsx src/lib/__bench__/spicemodel.ts",
+    "bench:model-holdout": "tsx src/lib/__bench__/spicemodel-holdout.ts",
+    "bench:model-coverage": "tsx src/lib/__bench__/spicemodel-holdout.ts --gate",
+    "bench:model-capabilities": "tsx --test src/lib/spice/__tests__/opportunity.test.ts src/lib/spice/__tests__/vendor.test.ts src/lib/spice/__tests__/model-route.test.ts",
+    "bench:model-release": "npm run bench:model-capabilities && npm run bench:model-coverage && npm run bench:ltspice",
+    "bench:release": "npm test && npm run lint && npm run build && npm run bench:cad-release && npm run bench:model-release && npm run bench:browser -- --spice --full",
+    "bench:ltspice": "tsx src/lib/__bench__/ltspice.ts"
   },
   "dependencies": {
     "@google/genai": "^2.17.1",

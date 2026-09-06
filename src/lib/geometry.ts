@@ -34,6 +34,8 @@ export interface Pad {
   centre: Point;
   widthMm: number;
   heightMm: number;
+  /** Clockwise pad rotation in degrees. Omitted means axis-aligned. */
+  rotationDeg?: number;
   /**
    * `roundrect` for a surface-mount land, `circle` for a plated hole.
    *
@@ -41,7 +43,7 @@ export interface Pad {
    * draws pin 1 as a roundrect to mark it and every other pin as a circle, which
    * is the convention this follows.
    */
-  shape: "roundrect" | "circle";
+  shape: "roundrect" | "circle" | "rect" | "oval";
   mounting: "smd" | "through-hole";
   /**
    * Finished hole diameter, mm. Present on a through-hole pad and absent on a
@@ -208,7 +210,11 @@ export type LandSource =
   /** Computed by IPC-7351B from this datasheet's package outline drawing. */
   | "ipc7351b"
   /** Plated holes sized by IPC-7251 from the lead diameter. */
-  | "ipc7251";
+  | "ipc7251"
+  /** Copper imported from a vendor-authored CAD footprint and revalidated here. */
+  | "vendor"
+  /** A value the user supplied while reviewing this particular part. */
+  | "user";
 
 export interface Corroboration {
   /** The reading the pads were built from. */
@@ -248,6 +254,15 @@ export interface FootprintProvenance {
   centreToCentreCrossMm?: number;
   pitchMm: number;
   /**
+   * Values supplied by the user that actually reached this footprint.
+   *
+   * Kept in the portable output because a typed correction is authoritative
+   * input, not a datasheet reading. Without this field the old implementation
+   * could correctly use a correction and then falsely describe the resulting
+   * lands as wholly printed by the vendor.
+   */
+  userSupplied?: Record<string, number | string>;
+  /**
    * The shape the lands were actually laid out in.
    *
    * Recorded rather than re-derived. `datasheetLayout` decides this from
@@ -266,8 +281,8 @@ export interface FootprintProvenance {
   /**
    * THE SECOND, INDEPENDENT SOURCE FOR THIS COPPER, and what it said.
    *
-   * The product's rule is that no value ships silently unless two independent
-   * sources agree on it, and the pads are the value that matters most. There are
+   * Independent agreement is the strongest available evidence for the pads,
+   * which are the value that matters most. There are
    * exactly two readings of a land pattern available in a datasheet, and they
    * fail differently:
    *

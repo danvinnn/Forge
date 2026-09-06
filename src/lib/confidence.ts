@@ -442,12 +442,15 @@ export class FootprintInvalidError extends Error {
 }
 
 /** A pad's extent along each axis, for the overlap and containment checks. */
-function extent(pad: { centre: { xMm: number; yMm: number }; widthMm: number; heightMm: number }) {
+function extent(pad: { centre: { xMm: number; yMm: number }; widthMm: number; heightMm: number; rotationDeg?: number }) {
+  const angle = ((pad.rotationDeg ?? 0) * Math.PI) / 180;
+  const halfWidth = (Math.abs(Math.cos(angle)) * pad.widthMm + Math.abs(Math.sin(angle)) * pad.heightMm) / 2;
+  const halfHeight = (Math.abs(Math.sin(angle)) * pad.widthMm + Math.abs(Math.cos(angle)) * pad.heightMm) / 2;
   return {
-    x0: pad.centre.xMm - pad.widthMm / 2,
-    x1: pad.centre.xMm + pad.widthMm / 2,
-    y0: pad.centre.yMm - pad.heightMm / 2,
-    y1: pad.centre.yMm + pad.heightMm / 2
+    x0: pad.centre.xMm - halfWidth,
+    x1: pad.centre.xMm + halfWidth,
+    y0: pad.centre.yMm - halfHeight,
+    y1: pad.centre.yMm + halfHeight
   };
 }
 

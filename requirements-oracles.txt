@@ -1,0 +1,3 @@
+# Independent readers used by the CAD export contract tests.
+pyaltiumlib==0.7
+kiutils==1.4.8

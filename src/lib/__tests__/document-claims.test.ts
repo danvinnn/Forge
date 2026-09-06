@@ -104,9 +104,26 @@ test("no user-facing sentence asserts what a document does not contain", () => {
   const offences: string[] = [];
   for (const path of sources(SOURCE)) {
     const text = readFileSync(path, "utf8");
+    // A BLOCK COMMENT'S MIDDLE LINES ARE STILL A COMMENT.
+    //
+    // This skipped a line starting with `*` or `/*`, which covers a JSDoc block
+    // and misses the one shape .tsx uses most: `{/* ... */}` wrapped over
+    // several lines, where the continuation lines start with ordinary prose.
+    //
+    // The header above says a comment MAY quote the forbidden wording, so the
+    // reason survives beside the code that used to say it - and then a comment
+    // doing exactly that was reported as an offence. An instrument that flags
+    // the explanation of its own finding teaches people to reword the
+    // explanation.
+    let inBlockComment = false;
     text.split("\n").forEach((line, index) => {
       const trimmed = line.trim();
-      if (trimmed.startsWith("*") || trimmed.startsWith("/*")) return;
+      const opens = line.lastIndexOf("/*");
+      const closes = line.lastIndexOf("*/");
+      const wasInside = inBlockComment;
+      if (opens !== -1 && opens > closes) inBlockComment = true;
+      else if (closes !== -1 && closes > opens) inBlockComment = false;
+      if (wasInside || trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("{/*")) return;
       // A COMMENT MAY QUOTE THE FORBIDDEN WORDING, and several do, precisely so
       // the reason survives beside the code that used to say it. Located by
       // position rather than by how the line starts: the explanations sit on the

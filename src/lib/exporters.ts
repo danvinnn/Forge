@@ -42,8 +42,10 @@ import {
   type ThermalVia
 } from "./geometry";
 import { confidenceChecks, FootprintInvalidError, summariseChecks, validateGeometry, validateSymbol } from "./confidence";
-import { confirmations, type Confirmation } from "./confirm";
+import { confirmations, type Confirmation, type ConfirmationReport } from "./confirm";
 import type { DatasheetText } from "./pdftext";
+import { assessCadAssurance } from "./cad-assurance";
+import type { AssuranceDecision } from "./assurance";
 import { emitKicadFootprint, emitKicadSymbol } from "./emitters/kicad";
 import { emitAltiumPcbLib, emitAltiumSchLib } from "./emitters/altium";
 
@@ -95,7 +97,8 @@ export const REQUIRED_INPUT_FIELDS = [
   "leadsPerSide",
   "thermalPadLengthMm",
   "thermalPadWidthMm",
-  "vacantLeadSlot"
+  "vacantLeadSlot",
+  "mounting"
 ] as const;
 
 /**
@@ -122,7 +125,7 @@ export const MILLIMETRE_INPUT_FIELDS = [
 ] as const;
 
 /** Answered by their own rule on the route, one branch each. */
-export const SHAPED_INPUT_FIELDS = ["leadSides", "vacantLeadSlot", "leadsPerSide"] as const;
+export const SHAPED_INPUT_FIELDS = ["leadSides", "vacantLeadSlot", "leadsPerSide", "mounting"] as const;
 
 /** Answered once per account on the settings screen, not per datasheet. */
 export const SETTING_INPUT_FIELDS = ["formedLeadSpanMm", "formedLeadContactMm"] as const;
@@ -153,7 +156,9 @@ export interface RequiredInput {
    * sides", which meant the one control the UI offered was a millimetre box for
    * a value that is neither.
    */
-  unit: "mm" | "count" | "counts";
+  unit: "mm" | "count" | "counts" | "choice";
+  /** Fixed choices when `unit` is `choice`; labels are safe to show verbatim. */
+  choices?: ReadonlyArray<{ value: string; label: string }>;
   scope: "install" | "part";
   /**
    * The page of THIS datasheet the answer is printed on, when we know it.
@@ -866,7 +871,7 @@ function symbolDescription(part: ResolvedPart): string {
  * provenance, so nothing outside this file could see where a land was actually
  * placed, which is the one thing no other check looks at. See `bench:copper`.
  */
-export function buildFootprintGeometry(
+function buildFootprintGeometryFromInputs(
   part: ResolvedPart,
   densityLevel: DensityLevel,
   formedLeadSpanMm?: number,
@@ -1029,6 +1034,45 @@ export function buildFootprintGeometry(
     }
   }
 
+  // MOUNTING STYLE IS A GEOMETRY INPUT, not the absence of one.
+  //
+  // Gull-wing and no-lead are surface-mount lead forms by definition, so that
+  // implication is safe. With any other or unread lead form, `mounting=null`
+  // says only that Forge did not read the answer. The old branch treated every
+  // such part as SMD because it tested only for the positive through-hole case.
+  // That can turn a PGA into a BGA-looking footprint: same A1-style terminal
+  // designators, entirely different copper. Ask instead of interpreting null.
+  if (part.dimensions.mounting === null) {
+    const hasSurfaceLands =
+      part.dimensions.landPadLengthMm !== null && part.dimensions.landPadWidthMm !== null;
+    if (
+      part.dimensions.leadForm === "gullwing" ||
+      part.dimensions.leadForm === "nolead" ||
+      hasSurfaceLands
+    ) {
+      // A rectangular pad length and width read from a recommended land-pattern
+      // drawing are themselves positive SMD evidence. A plated-hole drawing is
+      // represented by its hole/lead diameter instead; this does not infer from
+      // a package name or from silence.
+      part = { ...part, dimensions: { ...part.dimensions, mounting: "smd" } };
+    } else {
+      const why =
+        `The package drawing did not establish whether ${part.packageType} mounts on surface lands or in ` +
+        `plated holes. Those produce different footprints, and Forge will not treat an unread mounting style as SMD.`;
+      throw new FootprintUnavailableError(why, [{
+        field: "mounting",
+        label: "How this package mounts",
+        why,
+        unit: "choice",
+        choices: [
+          { value: "smd", label: "Surface mount" },
+          { value: "through-hole", label: "Through-hole" }
+        ],
+        scope: "part"
+      }]);
+    }
+  }
+
   // A GRID-ADDRESSED PART HAS NO ARRANGEMENT HERE YET, and this is where that is
   // said.
   //
@@ -1046,7 +1090,16 @@ export function buildFootprintGeometry(
   // No `needs`: there is no number a user could type that would make this
   // buildable. The chooser reports it as unsupported with this reason, which is
   // the truth and names our gap rather than the document's.
-  if (isGridAddressed(part.pins)) return gridFootprint(part, densityLevel);
+  if (isGridAddressed(part.pins)) {
+    if (part.dimensions.mounting === "through-hole") {
+      throw new FootprintUnavailableError(
+        `${part.packageType} is a through-hole grid array. Forge's grid placer currently emits surface lands, ` +
+        `so it will not approximate this package as a BGA or LGA.`,
+        []
+      );
+    }
+    return gridFootprint(part, densityLevel);
+  }
 
   // An exposed thermal pad is laid out when its size is known, and refused when
   // it is not. It is a mandatory soldered feature: the numbered lands alone are
@@ -1274,6 +1327,105 @@ export function buildFootprintGeometry(
           `footprint is built from the numbers already read off the page.`
         : `No land pattern could be read for ${part.packageType} from this datasheet, and none is derived from anything outside it. Supply the land pattern and it will be built from your numbers.`,
     askForLandPattern(part, formedLeadSpanMm, formedLeadContactMm, supplied)
+  );
+}
+
+/** Fields supplied by the user that the generator will actually consume. */
+function usedSuppliedDimensions(
+  part: ResolvedPart,
+  supplied: SuppliedDimensions | undefined
+): Record<string, number | string> {
+  if (!supplied) return {};
+  const used: Record<string, number | string> = {};
+  const correctedLand = new Set<keyof SuppliedDimensions>([
+    "landPadLengthMm",
+    "landPadWidthMm",
+    "landSpanMm",
+    "landSpanCrossMm"
+  ]);
+  for (const [field, value] of Object.entries(supplied) as Array<
+    [keyof SuppliedDimensions, number | string | undefined]
+  >) {
+    if (value === undefined) continue;
+    const held = part.dimensions[field as keyof ResolvedPart["dimensions"]];
+    // Land-pattern answers may deliberately correct a rejected reading. Every
+    // other answer fills a blank only; an unsolicited value never overrides
+    // what the datasheet stated.
+    if (correctedLand.has(field) || held === null || held === undefined) used[field] = value;
+  }
+  return used;
+}
+
+const COPPER_INPUT_FIELDS = new Set([
+  "landPadLengthMm",
+  "landPadWidthMm",
+  "landSpanMm",
+  "landSpanCrossMm",
+  "leadDiameterMm",
+  "pitchMm",
+  "leadSides",
+  "leadsPerSide",
+  "thermalPadLengthMm",
+  "thermalPadWidthMm",
+  "vacantLeadSlot"
+]);
+
+/**
+ * Makes user input impossible to mistake for a vendor or standards reading.
+ * The numbers still pass every geometry invariant; this changes only the
+ * evidence claim carried by the resulting artifact.
+ */
+function discloseSuppliedGeometry(
+  footprint: FootprintGeometry,
+  used: Record<string, number | string>
+): FootprintGeometry {
+  const entries = Object.entries(used);
+  if (entries.length === 0) return footprint;
+  const summary = entries.map(([field, value]) => `${field}=${value}`).join(", ");
+  const affectsCopper = entries.some(([field]) => COPPER_INPUT_FIELDS.has(field));
+  return {
+    ...footprint,
+    ...(affectsCopper
+      ? {
+          description:
+            `${footprint.partNumber} ${footprint.provenance.family}. Copper includes values supplied by the user ` +
+            `for this part (${summary}); it is validated but is not presented as an independently corroborated datasheet reading.`
+        }
+      : {}),
+    provenance: {
+      ...footprint.provenance,
+      source:
+        `Built from the cited record and applicable standard, with user-supplied inputs: ${summary}. ` +
+        `Underlying generation path: ${footprint.provenance.source}`,
+      userSupplied: used,
+      ...(affectsCopper
+        ? {
+            corroboration: {
+              from: "user" as const,
+              against: null,
+              agrees: false,
+              because: "user-supplied",
+              detail:
+                `Copper uses user-supplied values (${summary}). Forge checked the finished geometry for physical ` +
+                `validity but has no independent source for those answers; the bundle records them for review.`
+            }
+          }
+        : {})
+    }
+  };
+}
+
+export function buildFootprintGeometry(
+  part: ResolvedPart,
+  densityLevel: DensityLevel,
+  formedLeadSpanMm?: number,
+  supplied?: SuppliedDimensions,
+  formedLeadContactMm?: number
+): FootprintGeometry {
+  const used = usedSuppliedDimensions(part, supplied);
+  return discloseSuppliedGeometry(
+    buildFootprintGeometryFromInputs(part, densityLevel, formedLeadSpanMm, supplied, formedLeadContactMm),
+    used
   );
 }
 
@@ -2086,6 +2238,7 @@ export interface SuppliedDimensions {
   thermalPadLengthMm?: number;
   thermalPadWidthMm?: number;
   vacantLeadSlot?: number;
+  mounting?: "smd" | "through-hole";
 }
 
 /** A copy of the part with the user's answers filled in where the datasheet was silent. */
@@ -2133,7 +2286,8 @@ function withSupplied(part: ResolvedPart, supplied: SuppliedDimensions | undefin
       leadsPerSide: fill(part.dimensions.leadsPerSide, supplied.leadsPerSide),
       thermalPadLengthMm: fill(part.dimensions.thermalPadLengthMm, supplied.thermalPadLengthMm),
       thermalPadWidthMm: fill(part.dimensions.thermalPadWidthMm, supplied.thermalPadWidthMm),
-      vacantLeadSlot: fill(part.dimensions.vacantLeadSlot, supplied.vacantLeadSlot)
+      vacantLeadSlot: fill(part.dimensions.vacantLeadSlot, supplied.vacantLeadSlot),
+      mounting: fill(part.dimensions.mounting, supplied.mounting)
     }
   };
 }
@@ -3231,6 +3385,16 @@ export interface ExportOptions {
   /** Answers to what the datasheet did not print. See SuppliedDimensions. */
   supplied?: SuppliedDimensions;
   /**
+   * The release decision made at the public file boundary.
+   *
+   * Optional for low-level generator callers, but `/api/export` always passes
+   * it so unresolved reviews and limitations travel with the CAD files rather
+   * than existing only in the browser that downloaded them.
+   */
+  assurance?: AssuranceDecision;
+  /** Vendor-authored copper, parsed into the neutral geometry before emission. */
+  importedFootprint?: FootprintGeometry;
+  /**
    * When this bundle was generated, for the two files that record provenance.
    *
    * ## Why this is an input rather than a call to the clock
@@ -3284,6 +3448,7 @@ export async function createExportZip(
   // own to pass. `withSupplied` fills BLANKS only, so applying it twice to the
   // same record is the identity, and the alternative is one entry point silently
   // ignoring what the caller typed.
+  const usedSupplied = usedSuppliedDimensions(part, options.supplied);
   part = withSupplied(part, options.supplied);
 
   // EVERY question at once, rather than one per round trip.
@@ -3292,13 +3457,23 @@ export async function createExportZip(
   // the other turns a part needing four numbers into four separate refusals. The
   // user answers what is missing in one pass.
   const needs: RequiredInput[] = [];
-  let footprint: FootprintGeometry | null = null;
+  let footprint: FootprintGeometry | null = options.importedFootprint ?? null;
   // The footprint's own reason, kept verbatim. It is the specific one, and it is
   // what a reader needs: "has an exposed thermal pad, which is a mandatory
   // soldered feature" says something a count of outstanding values does not.
   let reason: string | null = null;
   try {
-    footprint = buildFootprintGeometry(part, densityLevel, options.formedLeadSpanMm, options.supplied, options.formedLeadContactMm);
+    // `part` already contains the supplied values so the STEP body and copper
+    // consume one record. Call the internal builder without applying them a
+    // second time, then attach the provenance captured from the original
+    // record. This also records fill-only answers such as body or thermal-pad
+    // dimensions; looking for them after filling would make them appear read.
+    if (!footprint) {
+      footprint = discloseSuppliedGeometry(
+        buildFootprintGeometryFromInputs(part, densityLevel, options.formedLeadSpanMm, undefined, options.formedLeadContactMm),
+        usedSupplied
+      );
+    }
     // THE FOOTPRINT CHECKS ITSELF BEFORE ANY FILE IS WRITTEN.
     //
     // Every check in `confidenceChecks` runs on the RECORD, and both of the
@@ -3454,6 +3629,7 @@ export async function createExportZip(
         exportFormat: format,
         generatedAt: (options.generatedAt ?? new Date()).toISOString(),
         checks: { summary: summariseChecks(checks), detail: checks },
+        releaseAssurance: options.assurance ?? null,
         // WHAT IS NOT IN THIS BUNDLE AND WHY. A reader should not have to
         // compare the file list against an expectation to find out.
         stepSupported: stepModel.supported,
@@ -3575,6 +3751,8 @@ export interface PackageOption {
    * Empty on `unsupported`, where there is nothing to take.
    */
   toCheck: Confirmation[] | null;
+  /** Full evidence report, retained so model-review items can share its budget. */
+  confirmation: ConfirmationReport | null;
   /**
    * THE FOOTPRINT THIS OPTION WOULD ACTUALLY PRODUCE, for drawing on screen.
    *
@@ -3803,7 +3981,12 @@ function optionFor(
     ? { ...part, packageType: variant.designator }
     : asPackage(part, variant.designator);
 
-  const base = { designator: variant.designator, family: variant.family, leadCount: variant.leadCount };
+  const base = {
+    designator: variant.designator,
+    family: variant.family,
+    leadCount: variant.leadCount,
+    confirmation: null as ConfirmationReport | null
+  };
   // WHAT `createExportZip` WOULD ALSO ASK FOR, which is what a click actually
   // runs. This checked the footprint alone and reported `ships`, while the
   // export then refused the same click for the body size the 3D solid is built
@@ -3851,26 +4034,23 @@ function optionFor(
     const report = doc
       ? confirmations(supplied, geometry, doc, answers.formedLeadSpanMm, answers.formedLeadContactMm)
       : null;
-    // OVER THE BUDGET IS A REFUSAL, NOT A WARNING.
-    //
-    // Anthony's rule, 2026-08-27: past five things to check the product has
-    // stopped saving anyone time, so it says this datasheet cannot be done
-    // automatically rather than handing the job back with a dozen boxes. The
-    // reason names every one of them, so the refusal is actionable and nobody
-    // has to guess what was missing.
-    if (report && report.overBudget) {
+    const assurance = assessCadAssurance(supplied, report);
+    // A proved contradiction is a refusal. Review volume is not: refusing a
+    // buildable package because its datasheet needs six glances instead of five
+    // loses possible coverage without making the generated geometry safer.
+    if (assurance.outcome === "refused") {
+      const contradicted = assurance.contradictions.map((item) => item.label.toLowerCase());
       return {
         ...base,
         status: "unsupported",
         needs: [],
         geometry: null,
-        reason:
-          `Too much of this package could not be confirmed against a second reading of the datasheet to ship it ` +
-          `without checking: ${report.flagged.map((item) => item.label.toLowerCase()).join(", ")}.`,
-        toCheck: report.flagged
+        reason: `The evidence contradicts this package, so Forge will not ship it: ${contradicted.join(", ")}.`,
+        toCheck: report?.flagged ?? [],
+        confirmation: report
       };
     }
-    return { ...base, status: "ships", needs: body, reason: null, toCheck: report?.flagged ?? null, geometry };
+    return { ...base, status: "ships", needs: body, reason: null, toCheck: report?.flagged ?? null, confirmation: report, geometry };
   } catch (error) {
     if (error instanceof FootprintUnavailableError) {
       return error.needs.length > 0
@@ -4132,7 +4312,12 @@ function optionFromPerPackageTable(
   answers: OptionAnswers,
   doc: DatasheetText | null
 ): PackageOption {
-  const base = { designator: variant.designator, family: variant.family, leadCount: variant.leadCount };
+  const base = {
+    designator: variant.designator,
+    family: variant.family,
+    leadCount: variant.leadCount,
+    confirmation: null as ConfirmationReport | null
+  };
   const entry = pinTableFor(tables, variant.designator);
   // Two different absences, and telling the user they are the same misdirects
   // them: no entry at all means the reading never covered this package, while

@@ -53,12 +53,23 @@ yarn-error.log*
 # Connector datasheets pulled for the Phase 0 evidence pass, 2026-09-02. Same
 # rule as every other cache: never commit somebody else's document.
 .phase0-cache
+# Datasheets fetched to fill an empty cell in `bench:states`. Same rule as every
+# other corpus: never commit somebody else's document.
+.states-cache
+# The AMPLIFIER hold-out, for the SPICE feature. Its own directory rather than
+# `.holdout-cache` so a part cannot be scored by two benches with two different
+# rules about what may be tuned against. Never committed: not our documents.
+.spice-holdout-cache
 
 # KiCad's official footprint library, cached by `bench:published` so a rerun is
 # offline. Public reference data, but it is somebody else's repository and it
 # does not belong in this one.
 .kicad-ref
 
+# Cached SPICE second readings, under .model-cache/spice. Same rule and the
+# same reason: an entry is valid only for the exact prompt that produced it, and
+# the entries quote datasheet content back.
+#
 # Cached model responses for the benchmarks. Not committed because an entry is
 # only valid for the exact prompt and page renders that produced it, so a shared
 # copy would be stale for anyone whose tree differs by one prompt character, and
@@ -76,3 +87,13 @@ gcp-key.json
 # The product's own spend ledger. A running total of what this deployment has
 # billed, written by `src/lib/spend.ts`. Machine-local state, not source.
 .forge
+
+# Reference only: a friend's LTspice copilot, kept locally for reference.
+# Not ours, never committed.
+spicy/
+
+# Bundles written by `bench:browser` so a human can open what the run produced.
+# The directory itself holds tracked scratch scripts, so this ignores the
+# OUTPUT rather than the directory: without it a `git add -A` after a bench run
+# commits twenty binary zips nobody meant to keep.
+scratchpad/bench-*.zip

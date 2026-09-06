@@ -343,19 +343,32 @@ export async function replayRecordsWithDocuments(): Promise<ResolvedPart[]> {
       out.push(part);
       continue;
     }
+    const dimensionRecord = Object.fromEntries(
+      Object.entries(part.dimensions).map(([field, value]) => [
+        field,
+        { value, confidence: 1, method: "deterministic", citation: null }
+      ])
+    );
     const repaired = withPrintedFootprint(
       {
         vendorLandPattern: null,
         packageType: { value: part.packageType },
-        packageOutlineCode: { value: part.packageOutlineCode }
+        packageOutlineCode: { value: part.packageOutlineCode },
+        dimensions: dimensionRecord,
+        notes: []
       } as unknown as PartRecord,
       doc
     );
-    out.push(
-      repaired.vendorLandPattern && repaired.vendorLandPattern.valuesMm.length > 0
-        ? { ...part, vendorLandPattern: repaired.vendorLandPattern }
-        : part
-    );
+    const dimensions = Object.fromEntries(
+      Object.entries(repaired.dimensions).map(([field, value]) => [field, value.value])
+    ) as ResolvedPart["dimensions"];
+    out.push({
+      ...part,
+      dimensions,
+      ...(repaired.vendorLandPattern && repaired.vendorLandPattern.valuesMm.length > 0
+        ? { vendorLandPattern: repaired.vendorLandPattern }
+        : {})
+    });
   }
   return out;
 }
