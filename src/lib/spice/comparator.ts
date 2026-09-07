@@ -41,7 +41,7 @@
 import { toSpice } from "./units";
 import { citationLines, spiceName } from "./emit";
 import { COMPARATOR, supportedCorners, usableAt, valueAt, type ModelBlock, type ModelParameter } from "./model";
-import { runNgspice, TOLERANCE_PCT, type Check, type ConformanceReport } from "./verify";
+import { ngspiceFailureReason, runNgspice, TOLERANCE_PCT, type Check, type ConformanceReport } from "./verify";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,10 +294,10 @@ export async function verifyComparator(
 
       const file = join(directory, `${name}-${corner}.cir`);
       await writeFile(file, deck(subckt, name, CORNER_INDEX[corner], delay, supply), "utf8");
-      const { stdout, ok } = await runNgspice(file);
+      const { stdout, ok, failure } = await runNgspice(file);
       if (!ok) {
-        simulatorMissing = true;
-        for (const parameter of MEASURABLE) unverifiable(parameter, corner, "ngspice is not available on this host");
+        simulatorMissing ||= failure === "missing";
+        for (const parameter of MEASURABLE) unverifiable(parameter, corner, ngspiceFailureReason(failure));
         continue;
       }
 

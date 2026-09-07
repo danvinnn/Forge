@@ -730,7 +730,8 @@ INLINE script elements, so every one was blocked, React never hydrated, and the
 page was served as dead HTML. That is the reported "cannot upload files": the
 input had no handler on it.
 
-Fixed with a per-request nonce in `src/middleware.ts`, which is stricter than
+Fixed with a per-request nonce in `src/proxy.ts` (the Next 16 name for the
+former middleware boundary), which is stricter than
 the alternative. Then fixed a second time with `force-dynamic` in
 `src/app/layout.tsx`, because a statically prerendered route has no request to
 take a nonce from and the PRODUCTION build was still dead while `next dev`

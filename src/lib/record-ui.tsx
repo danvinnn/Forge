@@ -753,7 +753,7 @@ export function AskPanel({
                       }}
                     />
                   )}
-                  <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onSupply(need, values[need.field] ?? "")}>
+                  <button type="button" className="btn btn-primary" disabled={busy || !(values[need.field] ?? "").trim()} onClick={() => onSupply(need, values[need.field] ?? "")}>
                     Use this
                   </button>
                 </div>

@@ -80,23 +80,36 @@ Every extracted value is escaped at the sink before being interpolated into gene
 ## Current support
 
 - **Input**: part number with an optional manufacturer hint, or a PDF upload. Upload works in every
-  deployment mode and is the primary path for controlled parts.
+  deployment mode and is the primary path for controlled parts. A typed part is retrieved and
+  verified in a model-free identification step first, so package selection and official-resource
+  recovery happen before the paid read; SPICE-only and combined builds do not require a separate
+  browser-side PDF upload.
 - **Extracted**: part number, manufacturer, package type, pin count, pin table, package dimensions,
   and radiation qualification (TID, SEE, SEL, QML class), each with confidence and citation.
 - **CAD export formats**: KiCad (`.kicad_sym` + `.kicad_mod` + STEP) and native Altium libraries.
   Cadence/OrCAD is shown as unavailable rather than emitting a misleading substitute.
 - **Official-resource recovery**: once a manufacturer and part are known, Forge inspects the
   manufacturer's own product page for CAD, package-drawing, application-note, and SPICE resources.
-  A supported direct file or archive can be imported in place. Vendor KiCad copper is parsed into
+  A supported direct file or archive can be imported in place. Vendor KiCad and EAGLE copper is parsed into
   Forge's format-neutral geometry, checked against the extracted terminal set and geometry
   invariants, then emitted wherever the selected format can represent it exactly; it is never
   trusted merely because it came from a vendor archive.
-  When the archive also carries a KiCad symbol, exact agreement on every pin number and name is
-  independent pinout evidence; disagreement leaves the source-page review in place and never
-  overwrites the datasheet reading.
+  Official STEP/STP package bodies are recovered as a distinct resource. Their bounded,
+  structurally valid source is preserved byte-for-byte in KiCad bundles and embedded in native
+  Altium output; Forge does not reinterpret the solid as copper or replace it with an approximate
+  generated body. Altium asks for the installed component height only when that format requires
+  the duplicated metadata and the datasheet does not provide it.
+  When the archive also carries a KiCad symbol, or an EAGLE library contains an exactly scoped
+  device-to-package connection table, exact agreement on every pin number and name is independent
+  pinout evidence; an exact disagreement refuses export and never overwrites the datasheet reading.
+  Ranked resources are tried automatically before the paid read, unique archive
+  members are selected by part/package evidence, and redirects must remain on the identified
+  manufacturer's HTTPS domain.
 - **SPICE output**: deterministic LTspice `.lib` and `.asy` files plus a conformance receipt for
-  operational amplifiers, comparators, voltage references, and LDO regulators. Forge refuses a
-  topology it cannot support; instrumentation-amplifier equations are not silently approximated.
+  operational amplifiers, instrumentation amplifiers, comparators, voltage references, and LDO
+  regulators. Instrumentation gain is generated only when Forge reads the resistance numerator
+  from the printed gain equation; no family constant is assumed. Forge refuses a topology it
+  cannot support.
   A refusal is not a dead end: a page-backed review can recover a missed supported-class value,
   and any standalone vendor `.SUBCKT` (plus supported LTspice primitive `.MODEL` cards) can be
   turned into a terminal-order-preserving adapter and neutral symbol. Where the simulator requires
@@ -114,14 +127,24 @@ Stated rather than hidden.
   document number, so no part-number pattern can reach them. VORAGO, CAES, Teledyne e2v, and
   Honeywell publish no public datasheets at all. Connectors have no derivable pattern anywhere. Run
   `npm run bench:coverage` for the measured per-category numbers rather than trusting an estimate.
-- **The text parser is tuned toward TI phrasing.** On other vendors it misses more, and those misses
-  are recorded as unknown rather than guessed.
-- **STEP export generates the package body enclosure only**; pin-lead geometry is still approximate.
+- **The deterministic text parser is strongest on common table layouts.** The commercial visual
+  reader can recover cited rows from broken-text and image-only PDFs across every shipped SPICE
+  class; visual-only values remain explicitly review-visible rather than confirming themselves.
+  A malformed unit glyph receives one focused page-pixel retry before it becomes a user review.
+- **Generated STEP export creates the package body enclosure only**; pin-lead geometry is still
+  approximate. When a matching manufacturer STEP/STP is available, Forge preserves that exact
+  model instead.
 - **A native Cadence emitter is not built yet.** KiCad and native Altium bundles are available.
-- **Vendor CAD ingestion currently accepts textual KiCad footprints.** Other vendor CAD formats
+- **Vendor CAD ingestion currently accepts textual KiCad footprints, Autodesk EAGLE/Fusion
+  Electronics XML libraries, and STEP/STP package bodies.** Other vendor CAD formats
   remain downloadable evidence but are not silently converted by a lossy parser. The import path
   preserves arbitrary pad positions, holes and rotations; unsupported back-side copper is rejected
-  with an actionable choice instead of being mirrored implicitly.
+  with an actionable choice instead of being mirrored implicitly. EAGLE package choice is exact,
+  not a similar-name match; arbitrary signal-layer copper and design-rule-dependent elongated pads
+  are not approximated. Native Altium output preserves rectangular, rounded, oval, and slotted-hole
+  geometry rather than flattening it. A uniquely applicable official KiCad/EAGLE footprint or SPICE model is
+  imported automatically; Forge asks only when the manufacturer
+  archive contains several plausible package or model files.
 - **Footprint math is IPC-7351B-based**, not a full implementation of the standard. It is described
   that way deliberately.
 - **Scanned or image-only datasheets** need the model path; the text pass will report unknowns.
@@ -144,8 +167,8 @@ npx tsc --noEmit         # type check
 npm run bench:coverage   # measured RETRIEVAL coverage (add -- --live for the real chain)
 npm run bench:extraction # measured EXTRACTION coverage (add -- --fetch to populate the cache)
 npm run bench:cad-opportunity # no avoidable CAD questions + frozen blind coverage floor
-npm run bench:cad-release     # complete CAD correctness and independent-reader gate
-npm run bench:release         # full CAD + SPICE gate; requires ngspice and official LTspice
+npm run bench:cad-release     # complete CAD gate; fails unless kicad-cli is installed
+npm run bench:release         # full CAD + SPICE gate; requires ngspice, KiCad and official LTspice
 npm run bench:model-holdout # free, offline SPICE census over all cached unseen parts
 npm run bench:model-capabilities # every generated/review/vendor route is reachable
 NGSPICE_BIN=/path/to/ngspice npm run bench:model-coverage # exhaustive SPICE gate

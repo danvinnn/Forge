@@ -102,6 +102,8 @@ export interface SpecRow {
    * identity has a single source, and `confirm.ts` flags it as such.
    */
   namedByModel?: boolean;
+  /** True when the visual reader recovered both the row and its values. */
+  recoveredByModel?: boolean;
   /** The symbol as printed, or null when the document prints none. */
   symbol: string | null;
   /** Test conditions from the row, joined as printed. */

@@ -68,10 +68,10 @@ export function policy(nonce: string, nodeEnv = process.env.NODE_ENV): string {
   ].join("; ");
 }
 
-export function middleware(request: NextRequest) {
-  // Web Crypto rather than node:crypto: this runs on the Edge runtime, which
-  // has no Node built-ins, and the whole repo is arranged to keep `node:`
-  // specifiers out of the edge compile.
+export function proxy(request: NextRequest) {
+  // Web Crypto keeps nonce generation portable and avoids coupling this
+  // request boundary to Node's crypto module even though Next 16 runs proxy
+  // files on the Node.js runtime.
   const nonce = btoa(crypto.randomUUID());
   const csp = policy(nonce);
 

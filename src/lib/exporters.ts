@@ -3394,6 +3394,8 @@ export interface ExportOptions {
   assurance?: AssuranceDecision;
   /** Vendor-authored copper, parsed into the neutral geometry before emission. */
   importedFootprint?: FootprintGeometry;
+  /** Vendor-authored STEP Part 21 text, preserved exactly after boundary validation. */
+  importedStep?: { fileName: string; source: string };
   /**
    * When this bundle was generated, for the two files that record provenance.
    *
@@ -3522,16 +3524,36 @@ export async function createExportZip(
   // question is still returned so the caller can offer it, and answering it
   // still produces the solid.
   const bodyNeeds = askForBody(part);
+  // Altium duplicates the model's installed height in the component-body
+  // record. A general vendor STEP can use arbitrary units and assembly
+  // transforms, so reading its bounding box without a CAD kernel would be an
+  // approximation. KiCad consumes the exact file and needs no duplicate value;
+  // Altium asks only for height when the datasheet did not provide it.
+  const importedAltiumHeightNeeds = options.importedStep && format === "altium"
+    ? bodyNeeds.filter((need) => need.field === "bodyHeightMm")
+    : [];
   if (needs.length > 0) {
     throw new FootprintUnavailableError(
       reason ??
         `${part.partNumber} is complete apart from its package body size, which the 3D model is built from.`,
-      [...needs, ...bodyNeeds]
+      [...needs, ...(options.importedStep ? importedAltiumHeightNeeds : bodyNeeds)]
+    );
+  }
+  if (importedAltiumHeightNeeds.length > 0) {
+    throw new FootprintUnavailableError(
+      `${part.partNumber}'s manufacturer STEP model is usable, but native Altium also requires the installed component height in its body record.`,
+      importedAltiumHeightNeeds
     );
   }
 
-  const stepModel =
-    bodyNeeds.length === 0
+  const stepModel = options.importedStep
+    ? {
+        content: options.importedStep.source,
+        supported: true,
+        fileName: `${baseName}.step`,
+        note: `The 3D body is the manufacturer-authored ${options.importedStep.fileName} model supplied to Forge.`
+      }
+    : bodyNeeds.length === 0
       ? buildStepModel(part, options.generatedAt ?? new Date())
       : {
           content: "",
@@ -3572,7 +3594,15 @@ export async function createExportZip(
       baseName,
       symbol,
       footprint,
-      stepModel.supported ? { name: stepModel.fileName, text: stepModel.content } : undefined
+      stepModel.supported
+        ? {
+            name: stepModel.fileName,
+            text: stepModel.content,
+            ...(options.importedStep && part.dimensions.bodyHeightMm !== null
+              ? { heightMm: part.dimensions.bodyHeightMm }
+              : {})
+          }
+        : undefined
     )
   );
 
@@ -3634,7 +3664,7 @@ export async function createExportZip(
         // compare the file list against an expectation to find out.
         stepSupported: stepModel.supported,
         stepNote: stepModel.note,
-        ...(bodyNeeds.length > 0 ? { omitted: { "3D body": bodyNeeds.map((need) => need.field) } } : {}),
+        ...(!stepModel.supported && bodyNeeds.length > 0 ? { omitted: { "3D body": bodyNeeds.map((need) => need.field) } } : {}),
         // The footprint is the file someone will fabricate from, so the manifest
         // states what it was computed from rather than making them open it.
         footprint: footprint.provenance,

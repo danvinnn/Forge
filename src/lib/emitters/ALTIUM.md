@@ -9,7 +9,10 @@ Read this with `DEFERRED.md` (the P1 item on native generators) and `src/lib/geo
 > embedded in the footprint library, and a second independent reader (AltiumSharp) checks both. That
 > second reader found a real defect the first one passed; see section 11. The last two open format
 > questions are closed in section 13, which also records a second defect: the courtyard was on a layer
-> the library never enabled, so Altium would have opened it and drawn nothing there. **Still nobody
+> the library never enabled, so Altium would have opened it and drawn nothing there. Native oval
+> copper is encoded as Altium's documented Round shape with unequal X/Y sizes; round-ended slotted
+> drills use the native slot shape, width, length, and relative rotation fields. Both are checked by
+> the independent reader alongside rectangles and rounded rectangles. **Still nobody
 > has opened the output in Altium.**
 >
 > **Status, 2026-07-26.** Built. `src/lib/emitters/altium/` writes both libraries and `altium` is
@@ -278,7 +281,10 @@ reader and AltiumSharp's writer.
 - **Rounded-rectangle pads.** The geometry says `roundrect`, and Altium encodes that with the base
   shape left as Round in the first block and the real shape and 50 percent corner radius in the
   per-layer stack. That is not guessable; it is what `PAD_SMD_ROUNDED.PcbLib` does. 50 percent is
-  the same corner as the KiCad emitter's 0.25 ratio.
+  the same corner as the KiCad emitter's 0.25 ratio. Imported ratios are encoded explicitly at the
+  format's one-percent resolution and refused if they cannot be represented exactly.
+- **Rectangular pads.** Both the base and per-layer shape entries use native `PCBPadShape` value 2,
+  independently read back as Rectangular. They are not flattened into a zero-radius roundrect.
 - **Layers.** Copper on Top Layer (1). Body outline, pin-1 dot and designator on Top Overlay (33).
   Courtyard on Mechanical 15 (71), which is where Altium's own IPC wizard puts one. Only the copper
   is a manufacturing instruction; the other two are conventions and are the first thing to look at

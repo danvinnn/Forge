@@ -12,8 +12,17 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { POST } from "../../../app/api/model/route";
+import { __setLimiterOverrides, __setResolverOverride, RateLimiter } from "../../retrieval";
 
 const CACHE = path.join(process.cwd(), ".bench-cache");
+
+// This file intentionally exercises many requests against one module-level
+// route. Rate-limit behavior has its own isolated contract tests; keep it from
+// turning a newly added route case into order-dependent 429s here.
+__setLimiterOverrides({
+  upload: new RateLimiter(1_000, 60_000),
+  lookup: new RateLimiter(1_000, 60_000)
+});
 
 function upload(fields: Record<string, string>, bytes?: Uint8Array): Request {
   const body = new FormData();
@@ -22,10 +31,71 @@ function upload(fields: Record<string, string>, bytes?: Uint8Array): Request {
   return new Request("http://localhost/api/model", { method: "POST", body });
 }
 
-test("a request with no file is refused by name, not by crash", async () => {
-  const response = await POST(upload({ partNumber: "OPA333" }));
+test("a malformed part-number lookup is refused before retrieval", async () => {
+  const response = await POST(upload({ partNumber: "?" }));
   assert.equal(response.status, 400);
-  assert.equal((await response.json()).code, "UPLOAD_INVALID");
+  assert.equal((await response.json()).code, "INPUT_REQUIRED");
+});
+
+test("an overlong part number is rejected rather than truncated into another device", async () => {
+  const response = await POST(upload({ partNumber: `OPA333${"X".repeat(80)}` }));
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "INPUT_REQUIRED");
+});
+
+const OPA333_LOOKUP = path.join(CACHE, "OPA333.pdf");
+test(
+  "a typed part builds SPICE from a verified retrieved datasheet without inventing an upload",
+  { skip: fs.existsSync(OPA333_LOOKUP) ? false : "no cached datasheet" },
+  async () => {
+    const bytes = fs.readFileSync(OPA333_LOOKUP);
+    __setResolverOverride({
+      name: "model-route-fixture",
+      isConfigured: () => true,
+      async resolve() {
+        return {
+          bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+          fileName: "OPA333.pdf",
+          pdfUrl: "https://www.ti.com/lit/ds/symlink/opa333.pdf",
+          byteLength: bytes.byteLength,
+          sha256: "fixture",
+          resolvedBy: "model-route-fixture"
+        };
+      }
+    });
+    try {
+      const response = await POST(upload({ partNumber: "OPA333", response: "json" }));
+      assert.equal(response.status, 200);
+      const payload = await response.json() as Record<string, unknown>;
+      assert.equal(payload.partNumber, "OPA333");
+      assert.equal(typeof payload.zipBase64, "string");
+    } finally {
+      __setResolverOverride();
+    }
+  }
+);
+
+test("a typed model request reports an unreadable retrieved document instead of crashing", async () => {
+  __setResolverOverride({
+    name: "broken-model-route-fixture",
+    isConfigured: () => true,
+    async resolve() {
+      return {
+        bytes: new Uint8Array([1, 2, 3, 4]).buffer,
+        fileName: "not-a-pdf.pdf",
+        byteLength: 4,
+        sha256: "fixture",
+        resolvedBy: "broken-model-route-fixture"
+      };
+    }
+  });
+  try {
+    const response = await POST(upload({ partNumber: "OPA333", response: "json" }));
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).code, "WRONG_DOCUMENT");
+  } finally {
+    __setResolverOverride();
+  }
 });
 
 test("a request with no part number is refused by name", async () => {
@@ -113,7 +183,10 @@ test("a value-bearing vendor model asks for its instance value, then builds with
   const zip = await JSZip.loadAsync(Buffer.from(payload.zipBase64, "base64"));
   assert.match(await zip.file("RESISTOR.lib")!.async("string"), /Rvendor P1 P2 RMOD 10k/);
 
-  body.set("vendorInstanceValue", "10k; .shell nope");
+  // A syntactically valid SPICE scalar still has to satisfy the question's
+  // physical contract: this route asks for a positive value, not merely a
+  // token the simulator can parse.
+  body.set("vendorInstanceValue", "0");
   response = await POST(new Request("http://localhost/api/model", { method: "POST", body }));
   assert.equal(response.status, 400);
   assert.equal((await response.json()).code, "INPUT_INVALID");

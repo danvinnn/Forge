@@ -26,7 +26,7 @@
  * ## Where the schedule comes from, stated plainly
  *
  * It is a DISPLAY estimate of the shape of the pipeline, not a reading of it.
- * The route runs one model call of about ninety seconds and four of the stages
+ * The route can spend about two minutes in its model work and four of the stages
  * are the four things it does, in order. Nothing in the response reports which
  * one is running, so the split between them is proportioned, and this file is
  * the only place that proportion exists.
@@ -145,15 +145,15 @@ export function stagesFor(intent: Intent, options?: { retrieving?: boolean }): R
     ...finding,
     {
       name: "Whole document to the model",
-      seconds: 10,
+      seconds: 15,
       note: "Every page seen once, so nothing is chosen before it is looked at."
     },
     {
       name: "Pages located and rendered",
-      seconds: 12,
+      seconds: 15,
       note: "The pages that answer this intent, rendered at full resolution."
     },
-    { name: third.name, seconds: 48, note: third.note },
+    { name: third.name, seconds: 85, note: third.note },
     {
       name: "Two readings cross-checked",
       seconds: 20,

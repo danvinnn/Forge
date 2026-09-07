@@ -235,6 +235,10 @@ export async function withRenderedPages(
   const shown = new Set(images.map((image) => image.page));
   return {
     ...request,
+    // The focused second pass receives the selected full-resolution images.
+    // Resending the entire PDF would pay for every page twice and obscure which
+    // visual evidence produced the correction.
+    sourceDocument: undefined,
     images,
     pages: request.pages.filter((page) => shown.has(page.page)),
     // THE PACKAGE PASS 1 SETTLED ON, carried forward.

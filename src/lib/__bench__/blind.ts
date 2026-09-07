@@ -37,7 +37,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { extractPartRecord } from "../datasheet";
 import { makeExtractionModel, runExtraction } from "../extraction";
-import { modelBudgetMs, withDeadline } from "../extraction/budget";
+import { DOCUMENT_READ_ROUTE_BUDGET_MS, modelBudgetMs, withDeadline } from "../extraction/budget";
 import { getDeploymentMode } from "../retrieval/deployment";
 import { cacheModeFromArgv,
   cachingModel, ModelCacheMiss, preRunProjection, type CacheMode, type CachingModel } from "./modelcache";
@@ -58,7 +58,7 @@ const CORPUS = join(process.cwd(), ".blind-cache");
 const CACHE_MODE: CacheMode = cacheModeFromArgv(process.argv);
 
 /** The same route budget the product works to, so a pass here is a pass there. */
-const ROUTE_BUDGET_MS = 300_000;
+const ROUTE_BUDGET_MS = DOCUMENT_READ_ROUTE_BUDGET_MS;
 
 let sharedModel: CachingModel | null | undefined;
 let currentLabel = "";

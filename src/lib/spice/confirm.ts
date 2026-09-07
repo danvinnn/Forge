@@ -89,6 +89,9 @@ export interface ModelReadValue {
   grade?: string | null;
   unit: string | null;
   group: string | null;
+  /** 1-indexed PDF page, required before a model-only row can become evidence. */
+  page?: number | null;
+  conditions?: string | null;
   min: number | null;
   typ: number | null;
   max: number | null;
@@ -202,6 +205,12 @@ export function confirmParameters(
     for (const parameter of machineRead) {
       const value = block.values[parameter]!;
       const source = rows.find((r) => r.key === parameter && r.page === value.page);
+      // A row recovered by the visual reader cannot corroborate itself. Its
+      // number and identity are one source and must remain review-visible.
+      if (source?.recoveredByModel) {
+        unmatched.push(parameter);
+        continue;
+      }
       const theirs = source ? findTheirs(source, modelRead) : undefined;
       if (!theirs) {
         unmatched.push(parameter);
@@ -279,9 +288,9 @@ export function confirmParameters(
     .map((parameter) => {
       const value = block.values[parameter]!;
       const source = rows.find((r) => r.key === parameter && r.page === value.page && r.namedByModel);
-      return source ? { parameter: source.parameter, key: parameter as string, page: source.page } : null;
+      return source ? { parameter: source.parameter, key: parameter as string, page: source.page, visualOnly: source.recoveredByModel === true } : null;
     })
-    .filter((n): n is { parameter: string; key: string; page: number } => n !== null);
+    .filter((n): n is { parameter: string; key: string; page: number; visualOnly: boolean } => n !== null);
   if (consumed.length > 0) {
     items.push({
       id: "parameter-naming",
@@ -291,7 +300,10 @@ export function confirmParameters(
       detail:
         `Our vocabulary did not recognise the wording of ${consumed.map((n) => `"${n.parameter}"`).join(", ")}, ` +
         `so ${consumed.length === 1 ? "it was" : "they were"} identified as ${consumed.map((n) => n.key).join(", ")} by the reading of the rendered page alone. ` +
-        `The numbers are the document's own and were read by both means. Check on page ${consumed[0].page} that ${consumed.length === 1 ? "this row states" : "these rows state"} what the model called ${consumed.length === 1 ? "it" : "them"}.`,
+        (consumed.some((item) => item.visualOnly)
+          ? `At least one row and its numbers were recovered from the rendered page by one means only. `
+          : `The numbers were read by both means; only the row identity came from the rendered-page reading. `) +
+        `Check on page ${consumed[0].page} that ${consumed.length === 1 ? "this row states" : "these rows state"} what the model called ${consumed.length === 1 ? "it" : "them"}${consumed.some((item) => item.visualOnly) ? ", and that the printed values agree" : ""}.`,
       consequence: "If a row was named wrongly, the model reproduces the right number for the wrong specification.",
       page: consumed[0].page
     });

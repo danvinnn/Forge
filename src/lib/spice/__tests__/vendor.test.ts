@@ -96,6 +96,8 @@ test("value-bearing model cards require a validated instance value", () => {
   assert.throws(() => wrapVendorCandidate(candidates[0], "vendor.lib", "R"), /numeric resistance/);
   assert.match(wrapVendorCandidate(candidates[0], "vendor.lib", "R", "10k").text, /Rvendor P1 P2 RMOD 10k/);
   assert.match(wrapVendorCandidate(candidates[2], "vendor.lib", "U", "0.01").text, /Uvendor P1 P2 P3 UMOD L=0.01/);
+  assert.throws(() => wrapVendorCandidate(candidates[0], "vendor.lib", "R", "0"), /positive SPICE numeric resistance/);
+  assert.throws(() => wrapVendorCandidate(candidates[1], "vendor.lib", "C", "0u"), /positive SPICE numeric capacitance/);
   assert.throws(() => wrapVendorCandidate(candidates[1], "vendor.lib", "C", "1u; .shell nope"), /numeric capacitance/);
 });
 

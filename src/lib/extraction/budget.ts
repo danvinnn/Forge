@@ -32,6 +32,12 @@
  */
 export const RESPONSE_MARGIN_MS = 3_000;
 
+/** The shared whole-job allowance used by both document-reading routes and all
+ * release instruments that claim to measure those routes. `maxDuration` stays
+ * a literal in the Next.js modules because deployment tooling statically reads
+ * it; the route-budget tests assert the two representations agree. */
+export const DOCUMENT_READ_ROUTE_BUDGET_MS = 240_000;
+
 /**
  * Below this there is no point asking. A call that cannot plausibly finish is a
  * guaranteed wasted request, and on a metered API that is real money for a
@@ -56,7 +62,10 @@ export const MIN_MODEL_BUDGET_MS = 5_000;
  * same figure `/api/lookup` cites in the comment above its `worthAsking` gate
  * and the same total `readprogress.ts` proportions its four stages across.
  */
-export const TYPICAL_MODEL_CALL_MS = 90_000;
+// Planning estimate, not the transport backstop. The live p90 was 128.8s; 135s
+// leaves a measured tail allowance without pretending every call consumes the
+// full 180-second hard ceiling.
+export const TYPICAL_MODEL_CALL_MS = 135_000;
 
 /**
  * What is left for the model, given the route's whole budget and what has been

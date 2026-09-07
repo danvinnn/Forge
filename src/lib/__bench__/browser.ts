@@ -44,6 +44,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DOCUMENT_READ_ROUTE_BUDGET_MS } from "../extraction/budget";
 
 const FULL = process.argv.includes("--full");
 /** Offline browser proof for the vendor-adapter recovery seams only. */
@@ -88,7 +89,12 @@ const BASE = `http://localhost:${PORT}`;
  * succeeds and is paid IN FULL every time one fails, which is how a four
  * datasheet run reached half an hour with no way to see where it was.
  */
-const PARSE_MS = 180_000;
+// The browser must wait longer than the route it is measuring. When provider
+// failover was added, a request could legitimately remain in recovery until
+// the route's 240-second ceiling; the old 180-second browser wait then declared
+// the UI dead while the server was still working. Keep one source of truth and
+// leave a small allowance for rendering the response in React.
+const PARSE_MS = DOCUMENT_READ_ROUTE_BUDGET_MS + 30_000;
 const EXPORT_MS = 60_000;
 
 /**
@@ -420,8 +426,70 @@ async function waitForServer(timeoutMs: number): Promise<boolean> {
     };
     page.on("response", watchIdentify);
 
+    // The free pass proves that manufacturer recovery is actually WIRED, not
+    // merely that its pure selector has tests. Mock only the external resource
+    // boundary: identification, React effects, the GET/POST sequence and File
+    // state all remain the production code. The full pass leaves this alone so
+    // a mock vendor model cannot change its real generated-model flow.
+    const officialRecoveryRoute = "**/api/resources**";
+    const officialRecoveryIdentifyRoute = "**/api/identify";
+    let officialRecoveryGets = 0;
+    let officialRecoveryPosts = 0;
+    if (!FULL) {
+      await page.route(officialRecoveryIdentifyRoute, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            partNumber: "LMP7704-SP",
+            partNumberFrom: "document",
+            manufacturer: "Texas Instruments",
+            pageCount: 30,
+            packages: [],
+            specPages: "3–8",
+            outlinePage: null,
+            sha256: "browser-recovery-fixture",
+            fileName: "LMP7704-SP.pdf"
+          })
+        });
+      });
+      await page.route(officialRecoveryRoute, async (route) => {
+        if (route.request().method() === "GET") {
+          officialRecoveryGets += 1;
+          // Keep discovery open long enough to observe the interlock. Without
+          // this, the mocked manufacturer responds in the same event-loop turn
+          // and a browser check can prove the import happened while completely
+          // missing a regression that lets the paid read race ahead of it.
+          await new Promise((resolve) => setTimeout(resolve, 750));
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ resources: [{ kind: "spice", label: "Official model", url: "https://maker.invalid/LMP7704-SP.lib" }] })
+          });
+        } else {
+          officialRecoveryPosts += 1;
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ files: [{ fileName: "LMP7704-SP.lib", source: ".SUBCKT LMP7704-SP INP INM OUT VCC VEE\n.ENDS LMP7704-SP\n" }] })
+          });
+        }
+      });
+    }
+
     const pdf = datasheets()[0];
     await page.setInputFiles("#suite-file", pdf);
+    if (!FULL) {
+      const recoveryNotice = page.getByText(/Checking official manufacturer artifacts before the read/i);
+      const noticeShown = await recoveryNotice.waitFor({ state: "visible", timeout: 2_000 })
+        .then(() => true)
+        .catch(() => false);
+      const readDisabled = await page.getByRole("button", { name: "Read for the SPICE model" })
+        .isDisabled()
+        .catch(() => false);
+      if (noticeShown && readDisabled) reached.add("official-recovery-precedes-read");
+      else problems.push(`[recovery] the paid read was not held while official manufacturer recovery was active`);
+    }
     await page.waitForTimeout(2500);
     page.off("response", watchIdentify);
     if (identifyStatuses.length === 0) {
@@ -433,7 +501,78 @@ async function waitForServer(timeoutMs: number): Promise<boolean> {
     }
 
     if (!FULL) {
-      note("  (skipping the model build: --full makes a real model call)");
+      // Measure the operation, not the sentence the screen currently uses for
+      // it. The combined CAD/STEP/SPICE importer intentionally has one status
+      // message, and grepping an older filename-specific message made a
+      // successful POST plus attached File report as a failure. The multipart
+      // assertion below independently proves that React retained the result.
+      if (officialRecoveryPosts > 0) reached.add("official-resource-auto-imported");
+      else {
+        const screen = await page.locator(".suite").innerText().catch(() => "");
+        problems.push(
+          `[recovery] a unique official SPICE artifact was discovered but not imported automatically ` +
+          `(resource GET ${officialRecoveryGets}, POST ${officialRecoveryPosts}; screen ${JSON.stringify(screen.slice(0, 180))})`
+        );
+      }
+
+      // Recovery is worthless if the File shown by React is omitted from the
+      // eventual model request. Keep the model boundary mocked (this is the
+      // no-spend pass), press the real button, and inspect the real multipart
+      // body rather than inferring request state from a filename on screen.
+      const modelBodies: string[] = [];
+      const modelRoute = "**/api/model";
+      await page.route(modelRoute, async (route) => {
+        const body = route.request().postData() ?? "";
+        modelBodies.push(body);
+        await route.fulfill({
+          status: 422,
+          contentType: "application/json",
+          body: JSON.stringify({ code: "MODEL_INCOMPLETE", error: "No-spend browser fixture stopped before extraction." })
+        });
+      });
+      const read = page.getByRole("button", { name: "Read for the SPICE model" });
+      await read.waitFor({ state: "visible", timeout: 2_000 });
+      const modelResponse = page.waitForResponse((response) => response.url().endsWith("/api/model"), { timeout: 5_000 });
+      await read.click();
+      await modelResponse.catch(() => null);
+      if (/name="vendorModel"; filename="LMP7704-SP\.lib"/i.test(modelBodies[0] ?? "")) reached.add("official-resource-sent-to-model");
+      else problems.push("[recovery] the automatically imported vendor model was not present in the model request");
+
+      // The headline promises that naming a part works too. This used to jump
+      // straight to the paid path (so CAD could not choose a package first),
+      // and SPICE simply threw "Choose a datasheet". Drive the typed path
+      // through free identification, automatic resource recovery, and the
+      // multipart model request. The server boundary remains mocked, so it is
+      // still free; absence of a `file` field is the signal for `/api/model` to
+      // retrieve and verify the public datasheet itself.
+      await page.getByRole("button", { name: "Start another part" }).click();
+      await page.locator(".frame-input").fill("LMP7704-SP");
+      await page.getByRole("button", { name: "Read for SPICE", exact: true }).click();
+      const typedRead = page.getByRole("button", { name: "Read for the SPICE model" });
+      if (await typedRead.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false)) {
+        reached.add("typed-part-identified-before-read");
+      } else {
+        problems.push("[lookup] a typed SPICE part did not reach the identified pre-read state");
+      }
+      await page.waitForTimeout(1_500);
+      const typedResponse = page.waitForResponse((response) => response.url().endsWith("/api/model"), { timeout: 5_000 });
+      await typedRead.click();
+      await typedResponse.catch(() => null);
+      const typedBody = modelBodies[1] ?? "";
+      if (
+        /name="partNumber"\r?\n\r?\nLMP7704-SP/i.test(typedBody) &&
+        /name="vendorModel"; filename="LMP7704-SP\.lib"/i.test(typedBody) &&
+        !/name="file";/i.test(typedBody)
+      ) {
+        reached.add("typed-spice-requested-with-recovery");
+      } else {
+        problems.push("[lookup] the typed SPICE request did not preserve its part and recovered vendor model without inventing an upload");
+      }
+
+      await page.unroute(modelRoute).catch(() => {});
+      await page.unroute(officialRecoveryRoute).catch(() => {});
+      await page.unroute(officialRecoveryIdentifyRoute).catch(() => {});
+      note("  (mocked the model boundary: no model call or spend)");
       return;
     }
 
@@ -1315,7 +1454,12 @@ async function main() {
           "suite-range-explained",
           "suite-blank-settings-accept-a-datasheet",
           "spice-intent-chosen",
-          "no-phantom-identify"
+          "no-phantom-identify",
+          "official-recovery-precedes-read",
+          "official-resource-auto-imported",
+          "official-resource-sent-to-model",
+          "typed-part-identified-before-read",
+          "typed-spice-requested-with-recovery"
         ]
     : FULL
     ? [

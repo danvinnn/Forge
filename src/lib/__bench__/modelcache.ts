@@ -181,6 +181,7 @@ export function promptFingerprint(): string {
   };
   const shapes: ExtractionRequest[] = [
     base,
+    { ...base, sourceDocument: { mimeType: "application/pdf", base64: "" } },
     { ...base, partNumber: "PART", packageType: "PKG (8)" },
     { ...base, partNumber: "PART", packageCandidates: ["PKG-A", "PKG-B"] },
     // The second pass: images present, so the render request drops out.
@@ -256,6 +257,10 @@ export function requestKey(modelName: string, request: ExtractionRequest): strin
   hash.update(`v${CACHE_VERSION}\n`);
   hash.update(`${modelName}\n`);
   hash.update(buildPrompt(request));
+  if (request.sourceDocument) {
+    hash.update(`\n${request.sourceDocument.mimeType}:${request.sourceDocument.base64.length}\n`);
+    hash.update(request.sourceDocument.base64);
+  }
   for (const image of request.images) {
     hash.update(`\n${image.page}:${image.mimeType}:${image.base64.length}\n`);
     hash.update(image.base64);
@@ -523,6 +528,7 @@ export function cachingModel(inner: ExtractionModel, mode: CacheMode, labelFor: 
 
   return {
     name: inner.name,
+    supportsNativePdf: inner.supportsNativePdf,
     stats,
     wasHit: () => lastWasHit,
     isConfigured: () => inner.isConfigured(),

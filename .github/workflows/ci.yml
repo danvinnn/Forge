@@ -22,6 +22,7 @@ jobs:
   verify:
     name: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -83,13 +84,13 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Tests (incl. air-gap scan + corpus allowlist gates)
-        run: npm test
+        run: timeout 10m npm test
 
       # Run the suite again. node:test executes files in PARALLEL and this codebase has already
       # shipped two flaky races (rate-limiter singletons, fetch mutation). A single green run does
       # not distinguish "passes" from "passed this time".
       - name: Tests again (flake detection)
-        run: npm test
+        run: timeout 10m npm test
 
       # The production build catches what tsc and tests do not: bundling errors, server/client
       # boundary violations, and anything that only fails when Next actually compiles the app.
@@ -137,6 +138,7 @@ jobs:
   ltspice:
     name: official LTspice acceptance
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -148,11 +150,51 @@ jobs:
       - name: Install official LTspice
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://ltspice.analog.com/software/LTspice64.msi" -OutFile "$env:RUNNER_TEMP\LTspice64.msi"
-          $process = Start-Process msiexec.exe -ArgumentList "/i `"$env:RUNNER_TEMP\LTspice64.msi`" /qn /norestart" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "LTspice installer exited $($process.ExitCode)" }
-          $binary = Get-ChildItem "C:\Program Files" -Filter "LTspice.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          $installer = Join-Path $env:RUNNER_TEMP "LTspice64.msi"
+          $installLog = Join-Path $env:RUNNER_TEMP "LTspice-install.log"
+
+          # Invoke-WebRequest spent almost eight minutes downloading this 170 MB
+          # MSI on the hosted runner and then exited without installing it. curl
+          # is already part of Windows Server, retries transient CDN failures, and
+          # returns a useful status instead of leaving a partial MSI behind.
+          & curl.exe --fail --location --retry 4 --retry-delay 5 --retry-all-errors `
+            --connect-timeout 30 --max-time 600 `
+            --output $installer "https://ltspice.analog.com/software/LTspice64.msi"
+          if ($LASTEXITCODE -ne 0) { throw "The official LTspice installer download failed with curl exit code $LASTEXITCODE." }
+
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "Analog Devices") {
+            throw "The downloaded LTspice installer does not have a valid Analog Devices signature."
+          }
+
+          $arguments = @("/i", $installer, "/qn", "/norestart", "/L*v", $installLog)
+          $process = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+          # 3010 is MSI success with a reboot requested; /norestart keeps the
+          # hosted runner alive and LTspice is usable immediately.
+          if ($process.ExitCode -notin @(0, 3010)) {
+            if (Test-Path $installLog) { Get-Content $installLog -Tail 200 }
+            throw "LTspice installer exited $($process.ExitCode)"
+          }
+          $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA) | Where-Object { $_ -and (Test-Path $_) }
+          $binary = Get-ChildItem $roots -Filter "LTspice.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $binary) { throw "The installed LTspice executable was not found." }
           "LTSPICE_BIN=$($binary.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Run every vendor adapter in official LTspice
-        run: npm run bench:ltspice -- --vendor-only
+      - name: Run every generated class and vendor adapter in official LTspice
+        run: npm run bench:ltspice
+
+  kicad:
+    name: official KiCad acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install official KiCad CLI
+        run: sudo apt-get update && sudo apt-get install -y kicad
+      - name: Run every generated symbol and footprint in KiCad
+        run: npm run bench:kicad -- --gate

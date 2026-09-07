@@ -15,6 +15,8 @@ import { toRows, readPage, carryFrom, type Row, type Span, type SpecRow } from "
 
 /** How many pages to scan. Specification tables are always in the front matter. */
 const MAX_PAGES = 40;
+const MAX_GAIN_EQUATION_PAGES = 1_000;
+const GAIN_SCAN_BUDGET_MS = 10_000;
 
 interface MuPdfLine {
   text?: string;
@@ -33,6 +35,74 @@ function spansOf(json: { blocks?: MuPdfBlock[] }): Span[] {
     }
   }
   return spans;
+}
+
+export interface GainEquationEvidence {
+  resistanceOhm: number;
+  printed: number;
+  unit: string;
+  page: number;
+  equation: string;
+}
+
+/**
+ * Reads K only from an explicit G = 1 + K/RG law (or RG = K/(G-1)).
+ * The ohmic unit is mandatory, so a bare coefficient can never acquire a
+ * magnitude from code. Distinct constants make the result ambiguous and are
+ * refused rather than selecting one mode silently.
+ */
+export function gainEquationFromText(pages: Array<{ page: number; text: string }>): GainEquationEvidence | null {
+  const all = pages.map((page) => page.text).join("\n");
+  if (!/\b(?:instrumentation\s+amplifier|in-amp)\b/i.test(all)) return null;
+
+  const numberAndUnit = String.raw`(\d+(?:\.\d+)?)\s*([kKmM]?)\s*(Ω|Ω|ohms?)`;
+  const rg = String.raw`R\s*[_{}()\-]?\s*G`;
+  const patterns = [
+    new RegExp(String.raw`(?:\bG\b|\bGAIN\b)\s*=\s*1\s*\+\s*\(?\s*${numberAndUnit}\s*\)?\s*\/\s*${rg}`, "gi"),
+    new RegExp(String.raw`${rg}\s*=\s*\(?\s*${numberAndUnit}\s*\)?\s*\/\s*\(?\s*(?:\bG\b|\bGAIN\b)\s*-\s*1\s*\)?`, "gi")
+  ];
+  const found: GainEquationEvidence[] = [];
+
+  for (const page of pages) {
+    const normalized = page.text.replace(/[−–—]/g, "-").replace(/\s+/g, " ");
+    for (const pattern of patterns) {
+      for (const match of normalized.matchAll(pattern)) {
+        const value = Number(match[1]);
+        const prefix = match[2];
+        const scale = prefix === "k" || prefix === "K" ? 1e3 : prefix === "M" ? 1e6 : prefix === "m" ? 1e-3 : 1;
+        const resistance = value * scale;
+        if (!(resistance > 0) || !Number.isFinite(resistance)) continue;
+        found.push({ resistanceOhm: resistance, printed: value, unit: `${prefix}${match[3]}`, page: page.page, equation: match[0] });
+      }
+    }
+  }
+  const magnitudes = new Set(found.map((item) => item.resistanceOhm));
+  return magnitudes.size === 1 ? found[0] : null;
+}
+
+/** Scans the native PDF text for the instrumentation-amplifier gain law. */
+export async function readGainEquation(pdfBytes: ArrayBuffer): Promise<GainEquationEvidence | null> {
+  let mupdf: typeof import("mupdf");
+  try { mupdf = await import("mupdf"); } catch { return null; }
+  let document: ReturnType<typeof mupdf.Document.openDocument>;
+  try { document = mupdf.Document.openDocument(new Uint8Array(pdfBytes), "application/pdf"); } catch { return null; }
+  const started = Date.now();
+  const pages: Array<{ page: number; text: string }> = [];
+  try {
+    const count = Math.min(document.countPages(), MAX_GAIN_EQUATION_PAGES);
+    for (let index = 0; index < count && Date.now() - started < GAIN_SCAN_BUDGET_MS; index++) {
+      try {
+        const structured = JSON.parse(document.loadPage(index).toStructuredText().asJSON()) as { blocks?: MuPdfBlock[] };
+        const lines = (structured.blocks ?? []).flatMap((block) => block.lines ?? []).map((line) => line.text ?? "").filter(Boolean);
+        // Adjacent lines are joined as well: PDF producers often split the
+        // numerator, slash and RG across separate text runs.
+        pages.push({ page: index + 1, text: [...lines, ...lines.slice(0, -1).map((line, at) => `${line} ${lines[at + 1]}`)].join("\n") });
+      } catch { /* one unreadable page does not hide the rest */ }
+    }
+    return gainEquationFromText(pages);
+  } finally {
+    try { document.destroy(); } catch { /* process owns no persistent handle */ }
+  }
 }
 
 /**

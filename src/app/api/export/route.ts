@@ -14,8 +14,9 @@ import { FootprintInvalidError } from "../../../lib/confidence";
 import { assessCadAssurance } from "../../../lib/cad-assurance";
 import { assessAssurance, type AssuranceFinding } from "../../../lib/assurance";
 import { partSchema, resolveForExport } from "../../../lib/types";
-import { sanitizeFileName, clientKey, RateLimiter } from "../../../lib/retrieval";
-import { compareKicadSymbolPins, importKicadFootprint } from "../../../lib/cad-import";
+import { sanitizeArtifactFileName, sanitizeFileName, clientKey, RateLimiter } from "../../../lib/retrieval";
+import { compareEagleLibraryPins, compareKicadSymbolPins, importCadFootprint } from "../../../lib/cad-import";
+import { importStepModel } from "../../../lib/step-import";
 
 export const runtime = "nodejs";
 // Cap how long an export can hold a serverless function open.
@@ -24,7 +25,7 @@ export const maxDuration = 30;
 // Export generates files and is CPU-bound, so it gets its own limiter.
 const exportLimiter = new RateLimiter(30, 60_000);
 // A part record is small JSON; reject anything absurd before parsing it.
-const MAX_EXPORT_BODY_BYTES = 3_000_000;
+const MAX_EXPORT_BODY_BYTES = 12_000_000;
 
 // Builds a Content-Disposition value that cannot break out of the header. Two defenses:
 //   1. Derive an ASCII-only fallback filename from the sanitized basename, so the plain filename=
@@ -53,10 +54,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request body too large." }, { status: 413 });
   }
 
-  const payload = await request.json().catch(() => null);
-  if (!payload) {
+  // Content-Length is only an early exit. A chunked request can omit it, and a
+  // client can lie about it, so the bytes actually received are bounded too.
+  const body = await request.text().catch(() => null);
+  if (body === null) {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
+  if (Buffer.byteLength(body, "utf8") > MAX_EXPORT_BODY_BYTES) {
+    return NextResponse.json({ error: "Request body too large." }, { status: 413 });
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(body);
+  } catch {
+    decoded = null;
+  }
+  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
+  }
+  const payload = decoded as Record<string, unknown>;
 
   const partResult = partSchema.safeParse(payload.part);
   if (!partResult.success) {
@@ -171,6 +187,7 @@ export async function POST(request: Request) {
   // one host; the store lives with the client that knows which line it is.
   const settings = parseSettings((payload as { settings?: unknown }).settings);
   let importedFootprint;
+  let importedStep;
   let importedPinConfirmation: AssuranceFinding | null = null;
   const importedCad = (payload as { importedCad?: unknown }).importedCad;
   if (importedCad !== undefined) {
@@ -182,15 +199,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "The vendor CAD import is missing its filename or file text." }, { status: 400 });
     }
     try {
-      importedFootprint = importKicadFootprint(
-        { fileName: sanitizeFileName(candidate.fileName), source: candidate.source },
+      importedFootprint = importCadFootprint(
+        { fileName: sanitizeArtifactFileName(candidate.fileName), source: candidate.source },
         part,
         densityOf(settings)
       );
+      if (candidate.fileName.toLowerCase().endsWith(".lbr")) {
+        try {
+          const comparison = compareEagleLibraryPins(candidate.source, part);
+          importedPinConfirmation = {
+            id: "pinout",
+            label: "Pin names and numbering",
+            state: comparison.agrees ? "confirmed" : "contradiction",
+            detail: comparison.detail
+          };
+        } catch {
+          // A package-only EAGLE file still carries useful copper. Its device
+          // table is optional independent evidence and must be exactly scoped.
+        }
+      }
       if (typeof (candidate as { pinEvidence?: unknown }).pinEvidence === "string") {
-        const comparison = compareKicadSymbolPins((candidate as { pinEvidence: string }).pinEvidence, part);
-        if (comparison.agrees) {
-          importedPinConfirmation = { id: "pinout", label: "Pin names and numbering", state: "confirmed", detail: comparison.detail };
+        try {
+          const comparison = compareKicadSymbolPins((candidate as { pinEvidence: string }).pinEvidence, part);
+          importedPinConfirmation = {
+            id: "pinout",
+            label: "Pin names and numbering",
+            state: comparison.agrees ? "confirmed" : "contradiction",
+            detail: comparison.detail
+          };
+        } catch {
+          // The symbol is independent OPTIONAL evidence. An archive whose
+          // symbol library cannot be scoped to this part must not invalidate
+          // copper that passed its own geometry and terminal checks; the
+          // existing datasheet pinout review remains in place instead.
         }
       }
     } catch (error) {
@@ -198,6 +239,21 @@ export async function POST(request: Request) {
         { error: error instanceof Error ? error.message : "The vendor CAD footprint could not be imported.", code: "VENDOR_CAD_UNUSABLE" },
         { status: 422 }
       );
+    }
+  }
+  const importedStepPayload = (payload as { importedStep?: unknown }).importedStep;
+  if (importedStepPayload !== undefined) {
+    if (typeof importedStepPayload !== "object" || importedStepPayload === null) {
+      return NextResponse.json({ error: "importedStep must contain a vendor STEP filename and file text." }, { status: 400 });
+    }
+    const candidate = importedStepPayload as { fileName?: unknown; source?: unknown };
+    if (typeof candidate.fileName !== "string" || typeof candidate.source !== "string") {
+      return NextResponse.json({ error: "The vendor STEP import is missing its filename or file text." }, { status: 400 });
+    }
+    try {
+      importedStep = importStepModel({ fileName: candidate.fileName, source: candidate.source });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "The vendor STEP model is invalid." }, { status: 422 });
     }
   }
 
@@ -374,7 +430,8 @@ export async function POST(request: Request) {
       // decision into manifest.json so every flagged or limited claim remains
       // visible after the archive leaves Forge.
       assurance,
-      importedFootprint
+      importedFootprint,
+      importedStep
     });
   } catch (error) {
     if (error instanceof GeneratorUnavailableError) {

@@ -20,14 +20,14 @@ import { join } from "node:path";
  */
 
 const root = join(import.meta.dirname, "..", "..", "..");
-const middlewareSource = readFileSync(join(root, "src", "middleware.ts"), "utf8");
+const proxySource = readFileSync(join(root, "src", "proxy.ts"), "utf8");
 const nextConfigSource = readFileSync(join(root, "next.config.ts"), "utf8");
 
 test("the framework's own inline scripts are admitted, by nonce and not by blanket permission", async () => {
-  const { middleware } = await import("../../middleware");
+  const { proxy } = await import("../../proxy");
   const { NextRequest } = await import("next/server");
 
-  const response = middleware(new NextRequest(new Request("https://forge.test/")));
+  const response = proxy(new NextRequest(new Request("https://forge.test/")));
   const csp = response.headers.get("Content-Security-Policy");
   assert.ok(csp, "every document response carries a policy");
 
@@ -47,9 +47,9 @@ test("the framework's own inline scripts are admitted, by nonce and not by blank
 test("the nonce is fresh per response, which is the only thing that makes it worth anything", () => {
   // A nonce reused across responses is guessable from any one page's source,
   // and then it is 'unsafe-inline' with extra steps.
-  assert.match(middlewareSource, /crypto\.randomUUID\(\)/, "generated per call");
+  assert.match(proxySource, /crypto\.randomUUID\(\)/, "generated per call");
   assert.ok(
-    !/const\s+nonce\s*=\s*["'`]/.test(middlewareSource),
+    !/const\s+nonce\s*=\s*["'`]/.test(proxySource),
     "the nonce is never a literal"
   );
 });
@@ -58,7 +58,7 @@ test("'unsafe-eval' is the dev server's, and never reaches a built bundle", asyn
   // React Refresh compiles modules from strings, so `next dev` needs it and a
   // production bundle does not. Shipping it always would be a standing
   // weakening of the policy for a convenience nobody in production uses.
-  const { policy } = await import("../../middleware");
+  const { policy } = await import("../../proxy");
   assert.ok(policy("n", "production").includes("script-src"));
   assert.ok(!policy("n", "production").includes("'unsafe-eval'"), "a built bundle evaluates no strings");
   assert.ok(policy("n", "development").includes("'unsafe-eval'"), "the dev server still refreshes");

@@ -40,6 +40,9 @@ const ALIASES: Record<string, RegExp[]> = {
   OUT: [/^OUT$/, /^OUTPUT$/, /^VO$/],
   VCC: [/^V\+$/, /^VCC$/, /^VDD$/, /^VP$/],
   VEE: [/^V-$/, /^VEE$/, /^VSS$/, /^VN$/],
+  REF: [/^REF$/, /^REFERENCE$/, /^VREF$/],
+  "RG+": [/^RG\+$/, /^RGP$/, /^RG1$/, /^GAIN\+$/],
+  "RG-": [/^RG-$/, /^RGM$/, /^RG2$/, /^GAIN-$/],
   IN: [/^IN$/, /^INPUT$/, /^VIN$/],
   GND: [/^GND$/, /^GROUND$/, /^COM$/, /^COMMON$/, /^0$/]
 };
@@ -51,6 +54,7 @@ function roleOf(pin: string, roles: string[]): string | null {
 }
 
 function rolesFor(deviceClass: DeviceClassId): string[] {
+  if (deviceClass === "instrumentation") return ["IN+", "IN-", "OUT", "REF", "VCC", "VEE", "RG+", "RG-"];
   return deviceClass === "opamp" || deviceClass === "comparator"
     ? ["IN+", "IN-", "OUT", "VCC", "VEE"]
     : ["IN", "OUT", "GND"];
@@ -217,6 +221,31 @@ function quotedIncludeName(fileName: string): string {
 function spiceScalar(value: string | undefined, parameter: NonNullable<VendorCandidate["instanceParameter"]>): string {
   const scalar = value?.trim() ?? "";
   if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|meg|[fpnumkgt])?$/i.test(scalar)) {
+    throw new Error(`Supply a positive SPICE numeric ${parameter} (for example 10k, 2.2u, or 0.01).`);
+  }
+  // Syntax alone is not the contract. Zero resistance, capacitance, or line
+  // length passes the token grammar above but cannot answer a question that
+  // explicitly asks for a positive physical value. Parse the suffix here so
+  // the route and the generated instance enforce the same boundary instead of
+  // accepting an answer the error text says is invalid.
+  const parsed = scalar.match(/^(\d+(?:\.\d*)?|\.\d+)(e[+-]?\d+|meg|[fpnumkgt])?$/i);
+  const suffix = parsed?.[2]?.toLowerCase() ?? "";
+  const multipliers: Record<string, number> = {
+    "": 1,
+    f: 1e-15,
+    p: 1e-12,
+    n: 1e-9,
+    u: 1e-6,
+    m: 1e-3,
+    k: 1e3,
+    meg: 1e6,
+    g: 1e9,
+    t: 1e12
+  };
+  const numeric = parsed
+    ? Number(parsed[1]) * (suffix.startsWith("e") ? 10 ** Number(suffix.slice(1)) : multipliers[suffix])
+    : NaN;
+  if (!Number.isFinite(numeric) || numeric <= 0) {
     throw new Error(`Supply a positive SPICE numeric ${parameter} (for example 10k, 2.2u, or 0.01).`);
   }
   return scalar;

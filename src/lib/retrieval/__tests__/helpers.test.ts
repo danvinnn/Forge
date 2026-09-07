@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertPdfBytes, PdfValidationError, MAX_PDF_BYTES } from "../pdf";
-import { sanitizeFileName } from "../filename";
+import { sanitizeArtifactFileName, sanitizeFileName } from "../filename";
 import { sha256Hex } from "../hash";
 import { finalizeRef } from "../ref";
 
@@ -42,6 +42,18 @@ test("sanitizeFileName enforces a single .pdf and cleans junk chars", () => {
 
 test("sanitizeFileName falls back when nothing usable remains", () => {
   assert.equal(sanitizeFileName("///"), "datasheet.pdf");
+});
+
+test("artifact filenames lose traversal without being relabelled as PDFs", () => {
+  assert.equal(sanitizeArtifactFileName("../../vendor/ACME 8.kicad_mod"), "ACME-8.kicad_mod");
+  assert.equal(sanitizeArtifactFileName("C:\\vendor\\model.lib"), "model.lib");
+  assert.equal(sanitizeArtifactFileName("///"), "vendor-artifact");
+});
+
+test("artifact filename limits preserve the format extension", () => {
+  const name = sanitizeArtifactFileName(`${"x".repeat(200)}.kicad_mod`);
+  assert.ok(name.length <= 128);
+  assert.match(name, /\.kicad_mod$/);
 });
 
 // sha256Hex

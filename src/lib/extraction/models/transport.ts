@@ -54,20 +54,20 @@ export function thinkingBudget(): number | null {
  * enforces its own, because only it knows how much of its budget is spent.
  *
  * RAISED FROM 60s ON 2026-08-20, because 60 was being HIT rather than
- * approached. Measured with `bench:repeat`, six parts, live calls, net of the
- * bench's own rate-limit pacing:
+ * approached. It is now 180s because the September release blind run hit the
+ * later 90s ceiling on 29 of 50 paid attempts, and a tuned control hit it three
+ * times in succession. A backstop the ordinary provider latency reaches is a
+ * failure generator, not a safety limit.
  *
  *     LM358         timed out on both runs AND both retries, returning nothing
  *     STM32F407VG   timed out, so the run was not comparable
  *     ADS1115       timed out once per run, and only succeeded on the retry
  *
- * A ceiling that the normal case hits is not a backstop, it is a failure
- * generator: every one of those was a call we paid for and threw away. 90s is
- * chosen as comfortably past the slowest call we have observed complete, while
- * still being short enough that two of them plus a retry stay inside the route
- * budget below.
+ * The route owns the whole-job deadline separately. Keeping this at 180s lets a
+ * slow individual call finish while `/api/parse` and `/api/lookup` still stop
+ * the complete read before their 240s ceiling.
  */
-export const MODEL_TIMEOUT_MS = 90_000;
+export const MODEL_TIMEOUT_MS = 180_000;
 
 /**
  * Transient upstream failures, retried; everything else surfaced at once.

@@ -9,7 +9,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseReading, secondReadingProvider, toComparable, tablePagesOf } from "../read-model";
+import { malformedUnitRows, parseReading, secondReadingProvider, secondReadingProviders, toComparable, toComparableWithUnitRepairs, tablePagesOf } from "../read-model";
+import { ALL_PARAMETERS } from "../model";
+import { SPEC_TABLE_PROMPT } from "../prompt";
 import type { SpecRow } from "../specs";
 
 function row(page: number): SpecRow {
@@ -40,10 +42,12 @@ test("the second reading chooses providers exactly as the extraction path does",
 
     process.env.GOOGLE_GEMINI_API_KEY = "test";
     assert.equal(secondReadingProvider(), "gemini");
+    assert.deepEqual(secondReadingProviders(), ["gemini"]);
 
     process.env.GOOGLE_APPLICATION_CREDENTIALS = "/tmp/test.json";
     process.env.FORGE_VERTEX_PROJECT = "test-project";
     assert.equal(secondReadingProvider(), "vertex");
+    assert.deepEqual(secondReadingProviders(), ["vertex", "gemini"]);
   } finally {
     if (previous.key === undefined) delete process.env.GOOGLE_GEMINI_API_KEY;
     else process.env.GOOGLE_GEMINI_API_KEY = previous.key;
@@ -130,6 +134,36 @@ test("a value whose unit cannot be scaled is dropped from the comparison", () =>
   assert.equal(values.length, 0);
 });
 
+test("a malformed drawn unit is eligible for one focused repair without changing its value", () => {
+  const first = {
+    tables: [{
+      heading: "Electrical Characteristics",
+      appliesTo: "VIN = 3.3 V",
+      columnGroups: [],
+      rows: [{ parameter: "Quiescent current", symbol: "IQ", conditions: "no load", unit: "�A", page: 7, values: [{ group: null, min: null, typ: 18, max: 25 }] }]
+    }]
+  };
+  assert.equal(malformedUnitRows(first).length, 1);
+  const repaired = structuredClone(first);
+  repaired.tables[0].rows[0].unit = "µA";
+  const values = toComparableWithUnitRepairs(first, repaired);
+  assert.equal(values.length, 1);
+  assert.equal(values[0].unit, "µA");
+  assert.equal(values[0].typ, 18, "the repair may not replace the first reading's number");
+});
+
+test("a unit repair with different row identity cannot attach to the wrong value", () => {
+  const first = {
+    tables: [{ heading: null, appliesTo: null, columnGroups: [], rows: [
+      { parameter: "Quiescent current", symbol: "IQ", conditions: "no load", unit: "�A", page: 7, values: [{ group: null, min: null, typ: 18, max: null }] }
+    ] }]
+  };
+  const wrong = structuredClone(first);
+  wrong.tables[0].rows[0].parameter = "Output current";
+  wrong.tables[0].rows[0].unit = "µA";
+  assert.equal(toComparableWithUnitRepairs(first, wrong).length, 0);
+});
+
 test("a reply that is fenced, prefaced or truncated is handled honestly", () => {
   assert.ok(parseReading('```json\n{"tables":[]}\n```'));
   assert.ok(parseReading('Here is the table:\n{"tables":[]}'));
@@ -174,4 +208,10 @@ test("never more pages than the cap, whatever the document does", () => {
   const many: SpecRow[] = [];
   for (let page = 1; page <= 30; page++) many.push(row(page));
   assert.equal(tablePagesOf(many).length, 8);
+});
+
+test("visual recovery can name every parameter a shipped behavior class consumes", () => {
+  for (const parameter of ALL_PARAMETERS) {
+    assert.match(SPEC_TABLE_PROMPT, new RegExp(`\\b${parameter}\\b`), `${parameter} is absent from the visual reader's vocabulary`);
+  }
 });

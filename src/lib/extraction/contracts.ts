@@ -185,6 +185,12 @@ export interface ExtractionRequest {
    * request degrades to the text-only form it had before.
    */
   images: RenderedPage[];
+  /**
+   * The original PDF for providers with native document vision. Present on the
+   * first pass only. Local/air-gapped models ignore it and continue to use the
+   * extracted text plus explicitly rendered pages.
+   */
+  sourceDocument?: { mimeType: "application/pdf"; base64: string };
   fileName: string;
   /** Requested part number, when the caller knows it. */
   partNumber?: string;
@@ -242,6 +248,13 @@ export interface ExtractionRequest {
 }
 
 export interface ExtractionResult {
+  /**
+   * The concrete reader that produced this answer when an extraction model has
+   * more than one configured transport. This is result provenance, not a
+   * routing hint: callers must never choose a value because of which provider
+   * returned it.
+   */
+  answeredBy?: string;
   /** Values the model produced, keyed by field. Absent means "no answer". */
   values: Partial<Record<ExtractionField, ModelValue>>;
   /**
@@ -446,6 +459,8 @@ export interface ExtractionResult {
 export interface ExtractionModel {
   /** Identifies the model in provenance and logs, e.g. "gemini" or "local:qwen3-vl". */
   readonly name: string;
+  /** Whether the transport sends the original PDF as a native visual document. */
+  readonly supportsNativePdf?: boolean;
   /** Whether this model has everything it needs to run (key, endpoint, etc.). */
   isConfigured(): boolean;
   extract(request: ExtractionRequest): Promise<ExtractionResult>;

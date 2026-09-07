@@ -371,8 +371,9 @@ without a download/re-upload loop; an archive with several plausible files is
 left as an explicit ordering-code choice rather than taking its first member.
 Air-gapped mode returns no resources and never loads the network resolver.
 
-Vendor `.kicad_mod` copper is parsed with bounded depth, token count, compressed
-download and expanded-text limits. It becomes the same neutral
+Vendor `.kicad_mod` copper and Autodesk EAGLE/Fusion Electronics XML `.lbr`
+packages are parsed with bounded source, token, compressed-download and
+expanded-text limits. They become the same neutral
 `FootprintGeometry` used by every emitter, including holes and pad rotations,
 and then passes the normal terminal-set and geometry invariants at the export
 boundary. Back-side footprints are refused rather than silently mirrored. The
@@ -382,13 +383,84 @@ official.
 
 When the same official archive contains a KiCad symbol, Forge independently
 parses its numbered pin names. Exact agreement settles the single pinout review;
-disagreement settles nothing and leaves the datasheet-page review in place. The
-vendor symbol never overwrites the extracted symbol. This complements the
-existing rendered-page visual read and text-layer/package checks with a source
-that fails differently.
+an exact disagreement is a contradiction and refuses the export. A library
+containing several symbols is scoped to the requested part (including explicit
+KiCad inheritance) before comparison, and an unscopable optional symbol is
+treated as unavailable evidence rather than evidence against otherwise valid
+copper. The vendor symbol never overwrites the extracted symbol. This
+complements the existing rendered-page visual read and text-layer/package
+checks with a source that fails differently.
+
+An EAGLE library can provide the same independent check through its device
+connection table. Forge uses it only when the requested part and selected
+package identify exactly one device; similar package names and archive order
+are never evidence. A disagreement is a contradiction at the export boundary,
+while an unscopable device table remains optional evidence and does not discard
+otherwise valid copper.
+
+Ranked official resources are now attempted automatically for the selected
+intent before the paid read can start. Failed URLs fall through inside the same
+job. A unique part/package match is attached; several plausible archive members
+remain a recognition-based user choice, because archive order is not evidence.
+Async discovery/import is tied to the identified part so an old request cannot
+attach a model or footprint after the user starts another part. Redirects are
+rechecked both for SSRF safety and manufacturer-domain provenance.
+
+Typing a part number now runs a free verified identification lookup before the
+read, just as uploading a PDF does. This restores pre-read package selection and
+lets official recovery run before spend. SPICE-only and combined requests no
+longer require a browser-side upload: `/api/model` retrieves the public PDF,
+checks that it names the requested part, and then uses the same byte-oriented
+builder. Air-gapped deployments still require an upload.
+
+Imported footprints now preserve arbitrary front-copper pad positions,
+duplicate shapes on one terminal, rotations, round/oval/rectangular/rounded
+shapes, plated and non-plated holes, slotted drills, paste/mask intent,
+rounded-corner ratios, and explicit Fab/courtyard bounds. They pass the same
+neutral-geometry and output-format gates as generated footprints; unsupported
+features are refused rather than flattened.
+
+Native Altium output now preserves rectangular and oval pads, slotted holes, and the stated per-layer
+rounded-corner percentage, checked by the independent reader. EAGLE elongated
+pads remain unavailable because Autodesk defines their aspect ratio through the
+destination board's design rules rather than completely in the library; Forge
+does not substitute the common 2:1 setting.
 
 CI installs and executes ngspice before the simulator-aware test suite. A
 separate Windows job installs official Analog Devices LTspice and runs every
 declared vendor adapter contract in the real customer simulator. Cached-
 datasheet representative models remain in the explicit release bench because
 those PDFs are intentionally not committed to this repository.
+
+A separate Linux job installs KiCad and asks `kicad-cli` to parse and render
+every generated symbol and footprint. `bench:cad-release` invokes that stage in
+gate mode, so a machine with no KiCad fails rather than printing that it checked
+nothing and exiting green.
+
+The last main-branch CI run before this handoff hung in its first test command
+until GitHub's six-hour limit and failed while installing LTspice. Every
+ngspice subprocess now has a tested 30-second/2-MB boundary, each CI test command
+has a ten-minute boundary, and the jobs themselves have explicit timeouts. The
+repaired LTspice install uses retrying curl, validates the Analog Devices
+signature, accepts MSI reboot-success code 3010, and prints the install log on
+failure. These paths still need their first run after this diff is committed.
+
+## Manufacturer STEP models, 2026-09-07
+
+Treat STEP/STP as a 3D package-body resource, never as footprint copper. A
+unique official file is imported automatically after part/package matching,
+bounded and checked for complete ISO-10303-21 HEADER and DATA sections, then
+preserved exactly. KiCad references that file; native Altium embeds it. Do not
+parse arbitrary STEP transforms or units to invent metadata. Altium duplicates
+the installed component height outside the model payload, so ask only for
+`bodyHeightMm` when neither the datasheet nor an answer supplies it. The same
+missing value must not withhold the valid KiCad bundle.
+
+An imported official model replaces an unavailable approximate generated body;
+it does not relax terminal, copper, or pinout assurance. Export request limits
+are enforced on the actual UTF-8 body, not only a client-controlled
+`Content-Length`. The local final state is 1,251/1,251 tests, clean TypeScript
+and ESLint, a successful production build, green frozen CAD/SPICE gates, and
+green no-spend plus authorized full production-browser passes. The official
+KiCad/Linux and LTspice/Windows CI jobs still require an explicitly authorized
+commit and push.

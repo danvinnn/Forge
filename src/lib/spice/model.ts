@@ -103,11 +103,20 @@ export const LDO_PARAMETERS = [
   "supplyVoltage"
 ] as const;
 
+/** Parameters consumed by the external-gain-resistor instrumentation amplifier. */
+export const INSTRUMENTATION_PARAMETERS = [
+  "gainResistance",
+  "offsetVoltage",
+  "quiescentCurrent",
+  "supplyVoltage"
+] as const;
+
 export type ModelParameter =
   | (typeof MODEL_PARAMETERS)[number]
   | (typeof REFERENCE_PARAMETERS)[number]
   | (typeof COMPARATOR_PARAMETERS)[number]
-  | (typeof LDO_PARAMETERS)[number];
+  | (typeof LDO_PARAMETERS)[number]
+  | (typeof INSTRUMENTATION_PARAMETERS)[number];
 
 /** Every parameter any class can consume, for the reader that fills a block. */
 export const ALL_PARAMETERS: ModelParameter[] = [
@@ -115,11 +124,12 @@ export const ALL_PARAMETERS: ModelParameter[] = [
     ...MODEL_PARAMETERS,
     ...REFERENCE_PARAMETERS,
     ...COMPARATOR_PARAMETERS,
-    ...LDO_PARAMETERS
+    ...LDO_PARAMETERS,
+    ...INSTRUMENTATION_PARAMETERS
   ])
 ];
 
-export type DeviceClassId = "opamp" | "reference" | "comparator" | "ldo";
+export type DeviceClassId = "opamp" | "reference" | "comparator" | "ldo" | "instrumentation";
 
 /**
  * A KIND OF PART THIS PRODUCT CAN MODEL.
@@ -242,6 +252,16 @@ export const COMPARATOR: DeviceClass = {
   neverStates: ["dropoutVoltage"]
 };
 
+export const INSTRUMENTATION: DeviceClass = {
+  id: "instrumentation",
+  label: "instrumentation amplifier",
+  parameters: INSTRUMENTATION_PARAMETERS,
+  // K is read from the printed law G = 1 + K/RG (or its algebraic inverse).
+  // It both identifies the class and defines the only gain this topology may
+  // claim. No family default is permitted.
+  required: ["gainResistance"]
+};
+
 /**
  * Ordered by how STRICT the test is, not by preference.
  *
@@ -274,7 +294,7 @@ export const COMPARATOR: DeviceClass = {
  * The amplifier stays first: it needs an open-loop gain AND a gain-bandwidth,
  * which nothing else on this list prints.
  */
-export const DEVICE_CLASSES: DeviceClass[] = [OPAMP, LDO, COMPARATOR, REFERENCE];
+export const DEVICE_CLASSES: DeviceClass[] = [INSTRUMENTATION, OPAMP, LDO, COMPARATOR, REFERENCE];
 
 /** Kept for callers that still mean the amplifier requirement by name. */
 export const REQUIRED: readonly ModelParameter[] = OPAMP.required;
@@ -380,6 +400,7 @@ export const EXPECTED_BASE: Record<ModelParameter, string[]> = {
   offsetVoltage: ["V"],
   quiescentCurrent: ["A"],
   openLoopOutputZ: ["OHM", "Ω"],
+  gainResistance: ["OHM", "Ω"],
   // A reference states its regulation terms per volt and per amp, and its
   // drift per degree. `%` and `V/V` are both accepted for the initial accuracy
   // because vendors print both, and `units.ts` scales a percent to a fraction

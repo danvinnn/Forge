@@ -37,6 +37,11 @@ export interface Pad {
   /** Clockwise pad rotation in degrees. Omitted means axis-aligned. */
   rotationDeg?: number;
   /**
+   * Rounded-corner radius divided by the shorter pad dimension. Present only
+   * when the source states it; generated roundrects use the emitter default.
+   */
+  cornerRadiusRatio?: number;
+  /**
    * `roundrect` for a surface-mount land, `circle` for a plated hole.
    *
    * A through-hole pad is round because the lead is: the reference `DIP-8_W7.62mm`
@@ -45,6 +50,8 @@ export interface Pad {
    */
   shape: "roundrect" | "circle" | "rect" | "oval";
   mounting: "smd" | "through-hole";
+  /** False for a mechanical/non-plated hole. Through-hole terminals default true. */
+  plated?: boolean;
   /**
    * Finished hole diameter, mm. Present on a through-hole pad and absent on a
    * land.
@@ -56,6 +63,12 @@ export interface Pad {
    * from the same setting.
    */
   drillMm?: number;
+  /** Width/height of an explicitly oval or slotted drill. Both travel together. */
+  drillWidthMm?: number;
+  drillHeightMm?: number;
+  /** Explicit layer intent from an imported land. Omitted keeps generator defaults. */
+  hasPaste?: boolean;
+  hasMask?: boolean;
   /**
    * Solder paste apertures, when paste must NOT follow the copper.
    *

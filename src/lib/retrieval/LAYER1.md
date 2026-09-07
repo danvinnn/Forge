@@ -161,7 +161,7 @@ no key, no quota, and no terms acceptance. The API rejections in "Decided agains
 terms and cost, not on the false coverage claim.
 
 #### Chain budget
-`resolveChainBudgetMs()` (default 12s, override with `FORGE_CHAIN_BUDGET_MS`) caps the whole chain. Rad-hard parts miss in EVERY resolver, so the
+`resolveChainBudgetMs()` (default 45s, override with `FORGE_CHAIN_BUDGET_MS`) caps the whole chain. Rad-hard parts miss in EVERY resolver, so the
 full-chain walk is the common path, not the exceptional one. Without a ceiling a VORAGO lookup pays
 every resolver's timeouts in series before the user is told to upload. Checked between resolvers, so
 a single resolver can overshoot by its own timeout; the per-call `AbortController` bounds that. A
@@ -471,7 +471,7 @@ nothing has finished yet, so ten simultaneous lookups of the same part previousl
 ten times and hit the vendor ten times. They now share one walk. At consumer volume this is both
 wasteful and the fastest way to get our egress IP throttled by ti.com.
 
-**Chain budget is now 12s and configurable** via `FORGE_CHAIN_BUDGET_MS`, down from a hardcoded 25s.
+**Chain budget is now 45s and configurable** via `FORGE_CHAIN_BUDGET_MS`. The route budget is checked against the measured model-read allowance so retrieval cannot silently consume the time needed to finish extraction.
 It has to sit under the host's function timeout or the platform kills the request first and the user
 gets a 504 instead of our clean `DATASHEET_NOT_FOUND`.
 
@@ -781,4 +781,3 @@ with enough detail to act on, and they do not turn CI red.
 
 See `DEFERRED.md` for: distributed rate limiting, SSRF DNS pinning, Layer 2 parser resource limits,
 and the live production search-block measurement.
-

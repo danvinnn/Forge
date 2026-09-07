@@ -32,6 +32,7 @@ import { verify, type Check } from "../../../lib/spice/verify";
 import { isOpenCollector, verifyComparator } from "../../../lib/spice/comparator";
 import { verifyReference } from "../../../lib/spice/reference";
 import { verifyLdo } from "../../../lib/spice/ldo";
+import { verifyInstrumentation } from "../../../lib/spice/instrumentation";
 import { assessModelAssurance } from "../../../lib/spice/assurance";
 import {
   compatibleVendorCandidates,
@@ -42,7 +43,16 @@ import {
   type VendorCandidate
 } from "../../../lib/spice/vendor";
 import { GENERATED_OPPORTUNITY, VENDOR_OPPORTUNITY, unresolvedOpportunity } from "../../../lib/spice/opportunity";
-import { getDeploymentMode, clientKey, activeUploadLimiter, MAX_PDF_BYTES } from "../../../lib/retrieval";
+import { extractPartRecord } from "../../../lib/datasheet";
+import { looksLikeWrongDocument, namesThePart } from "../../../lib/pdftext";
+import {
+  getDeploymentMode,
+  makeResolver,
+  clientKey,
+  activeLookupLimiter,
+  activeUploadLimiter,
+  MAX_PDF_BYTES
+} from "../../../lib/retrieval";
 
 /** A part number is a short printed token. Bounded like every other input here. */
 const MAX_PART_NUMBER_CHARS = 64;
@@ -52,13 +62,13 @@ const MAX_VENDOR_MODEL_BYTES = 5_000_000;
 /**
  * How long this route may run, declared rather than inherited.
  *
- * `/api/parse` declares 150 and races the model pass against it. This route
+ * `/api/parse` declares 240 and races the model pass against it. This route
  * declared nothing at all, so it inherited the platform default and a slow
  * second reading killed the whole request: the user got a generic failure
  * instead of the model, which the deterministic reading alone can always
  * produce. That is `forge-route-budget-gap` on a route written afterwards.
  */
-export const maxDuration = 150;
+export const maxDuration = 240;
 
 /**
  * How much of that the SECOND READING may take.
@@ -68,7 +78,7 @@ export const maxDuration = 150;
  * 2026-09-04, a second reading of a specification table takes tens of seconds
  * and occasionally minutes on a busy endpoint.
  */
-const SECOND_READING_BUDGET_MS = 90_000;
+const SECOND_READING_BUDGET_MS = 180_000;
 
 /**
  * The second reading, or nothing, within the budget.
@@ -357,8 +367,59 @@ export async function POST(request: Request) {
     return fail("Could not read the uploaded file.", "UPLOAD_INVALID", 400);
   }
 
-  const file = formData.get("file");
-  if (!(file instanceof File)) return fail("Missing PDF upload.", "UPLOAD_INVALID", 400);
+  const partField = formData.get("partNumber");
+  const partNumber = typeof partField === "string" ? partField.trim() : "";
+  if (partNumber.length > MAX_PART_NUMBER_CHARS || !/^[A-Za-z0-9][A-Za-z0-9._+\-/ ]*$/.test(partNumber)) {
+    return fail("A valid part number is required.", "INPUT_REQUIRED", 400);
+  }
+  const manufacturerField = formData.get("manufacturer");
+  let manufacturer = typeof manufacturerField === "string" ? manufacturerField.trim() : null;
+  if (manufacturer !== null && manufacturer.length > 100) {
+    return fail("The manufacturer name is too long.", "INPUT_INVALID", 400);
+  }
+
+  // A part-number workflow has no browser-side PDF to upload. Resolve the same
+  // public datasheet here, validate that it really names the requested part,
+  // and then feed the exact same byte-oriented builder used by uploads. This
+  // keeps retrieval out of the model and makes "name a part" work for SPICE and
+  // combined CAD+SPICE instead of failing behind a button that promises it.
+  const uploaded = formData.get("file");
+  let file: File;
+  if (uploaded instanceof File) {
+    file = uploaded;
+  } else if (uploaded !== null) {
+    return fail("The PDF upload is invalid.", "UPLOAD_INVALID", 400);
+  } else {
+    if (getDeploymentMode() === "air-gapped") {
+      return fail("Upload the datasheet PDF in air-gapped mode; part-number lookup is disabled.", "INPUT_REQUIRED", 422);
+    }
+    const lookupLimit = await activeLookupLimiter().check(clientKey(request));
+    if (!lookupLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many part lookups. Try again shortly.", code: "RATE_LIMITED", mode: getDeploymentMode() },
+        { status: 429, headers: { "Retry-After": String(lookupLimit.retryAfterSeconds) } }
+      );
+    }
+    let ref;
+    try {
+      const resolver = await makeResolver(getDeploymentMode());
+      ref = await resolver?.resolve(partNumber, manufacturer ? { manufacturer } : undefined);
+    } catch {
+      return fail("The datasheet lookup failed. Try again or upload the PDF directly.", "LOOKUP_FAILED", 502);
+    }
+    if (!ref) return fail(`No public datasheet was found for ${partNumber}. Upload it directly instead.`, "DATASHEET_NOT_FOUND", 404);
+    let identified;
+    try {
+      identified = await extractPartRecord(ref.fileName, ref.bytes, ref.pdfUrl);
+    } catch {
+      return fail(`The retrieved document for ${partNumber} could not be read as a datasheet. Upload the PDF directly.`, "WRONG_DOCUMENT", 422);
+    }
+    if (looksLikeWrongDocument(identified.doc) || !namesThePart(identified.doc, partNumber)) {
+      return fail(`The retrieved document could not be verified as the datasheet for ${partNumber}. Upload the correct PDF directly.`, "WRONG_DOCUMENT", 422);
+    }
+    manufacturer ||= identified.part.manufacturer.value?.slice(0, 100) ?? null;
+    file = new File([ref.bytes], ref.fileName, { type: "application/pdf" });
+  }
   if (file.size > MAX_PDF_BYTES) return fail("File is larger than the 50MB limit.", "UPLOAD_INVALID", 413);
 
   const cadBundle = formData.get("cadBundle");
@@ -372,15 +433,13 @@ export async function POST(request: Request) {
     return fail("The vendor model is larger than the 5MB limit.", "UPLOAD_INVALID", 413);
   }
 
-  const partField = formData.get("partNumber");
-  const partNumber = typeof partField === "string" ? partField.trim().slice(0, MAX_PART_NUMBER_CHARS) : "";
-  if (!partNumber) return fail("Missing part number.", "INPUT_REQUIRED", 400);
-  const manufacturerField = formData.get("manufacturer");
-  const manufacturer = typeof manufacturerField === "string" ? manufacturerField.trim().slice(0, 100) : null;
   const vendorCandidateField = formData.get("vendorCandidate");
   const vendorCandidateId = typeof vendorCandidateField === "string" ? vendorCandidateField : undefined;
   const vendorInstanceValueField = formData.get("vendorInstanceValue");
-  const vendorInstanceValue = typeof vendorInstanceValueField === "string" ? vendorInstanceValueField.trim().slice(0, 32) : undefined;
+  const vendorInstanceValue = typeof vendorInstanceValueField === "string" ? vendorInstanceValueField.trim() : undefined;
+  if (vendorInstanceValue !== undefined && vendorInstanceValue.length > 32) {
+    return fail("The vendor instance value is too long.", "INPUT_INVALID", 400);
+  }
 
   // Which specification block the user is holding, where they have said. A
   // datasheet printing one block per supply, or several grades side by side,
@@ -389,6 +448,12 @@ export async function POST(request: Request) {
   // reports the alternatives.
   const scopeField = formData.get("scope");
   const groupField = formData.get("group");
+  if (
+    (typeof scopeField === "string" && scopeField.length > 200) ||
+    (typeof groupField === "string" && groupField.length > 200)
+  ) {
+    return fail("The specification block choice is too long.", "INPUT_INVALID", 400);
+  }
   const blockChoiceField = formData.get("blockChoice");
   let blockIndex: number | undefined;
   if (blockChoiceField !== null) {
@@ -407,8 +472,8 @@ export async function POST(request: Request) {
   const choose =
     typeof scopeField === "string" || typeof groupField === "string" || blockIndex !== undefined || reviewedClass !== undefined
       ? {
-          scope: typeof scopeField === "string" ? scopeField.slice(0, 200) : undefined,
-          group: typeof groupField === "string" ? groupField.slice(0, 200) : undefined,
+          scope: typeof scopeField === "string" ? scopeField : undefined,
+          group: typeof groupField === "string" ? groupField : undefined,
           blockIndex,
           deviceClass: reviewedClass
         }
@@ -652,7 +717,9 @@ export async function POST(request: Request) {
           ? await verifyComparator(wrapped.text, built.block, "FORGE_VENDOR", typical)
           : built.deviceClass!.id === "reference"
             ? await verifyReference(wrapped.text, built.block, "FORGE_VENDOR", typical)
-            : await verifyLdo(wrapped.text, built.block, "FORGE_VENDOR", typical);
+            : built.deviceClass!.id === "ldo"
+              ? await verifyLdo(wrapped.text, built.block, "FORGE_VENDOR", typical)
+              : await verifyInstrumentation(wrapped.text, built.block, "FORGE_VENDOR", typical);
       vendorVerification = { status: "checked", error: null, checks: checked.checks, simulatorMissing: checked.simulatorMissing };
     } catch (error) {
       vendorVerification = {

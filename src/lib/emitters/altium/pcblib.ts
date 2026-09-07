@@ -193,14 +193,20 @@ function padRecord(
   // the four things that differ from a surface-mount land, and nothing here is
   // inferred from the format's documentation.
   const throughHole = pad.mounting === "through-hole";
-  if (throughHole && !(pad.drillMm && pad.drillMm > 0)) {
+  const slotted = throughHole && pad.drillWidthMm !== undefined && pad.drillHeightMm !== undefined;
+  if (throughHole && (pad.drillWidthMm === undefined) !== (pad.drillHeightMm === undefined)) {
+    throw new AltiumEmitError(`Pad ${pad.number || "(mechanical hole)"} has an incomplete slotted-drill size.`);
+  }
+  const holeWidth = slotted ? Math.min(pad.drillWidthMm as number, pad.drillHeightMm as number) : pad.drillMm;
+  const holeLength = slotted ? Math.max(pad.drillWidthMm as number, pad.drillHeightMm as number) : pad.drillMm;
+  if (throughHole && !(holeWidth && holeWidth > 0 && holeLength && holeLength > 0)) {
     throw new AltiumEmitError(
       `Pad ${pad.number} is through-hole with no drill size. A hole of zero is not a hole, and writing one would produce unplated pads that look correct on screen.`
     );
   }
   const layer = options.layer ?? (throughHole ? LAYER.multiLayer : LAYER.topCopper);
   const shape: string = pad.shape;
-  if (shape !== "roundrect" && shape !== "circle") {
+  if (shape !== "roundrect" && shape !== "circle" && shape !== "rect" && shape !== "oval") {
     throw new AltiumEmitError(`Pad ${pad.number} has shape "${shape}", which this generator cannot write.`);
   }
   if (!(pad.widthMm > 0) || !(pad.heightMm > 0)) {
@@ -220,17 +226,20 @@ function padRecord(
     main.writeInt32LE(sizeY, offset + 4);
   }
   // The hole. Zero for a land, the finished drill for a through-hole pad.
-  main.writeInt32LE(throughHole ? toAltiumUnits(pad.drillMm as number) : 0, 45);
+  main.writeInt32LE(throughHole ? toAltiumUnits(holeWidth as number) : 0, 45);
   // The three base shapes at 49-51. The template ships 1 (Round), which is also
   // how Altium encodes a ROUNDED RECTANGLE: the base stays round and the real
   // shape lives in the per-layer stack below. A round through-hole pad wants
   // Round in both places, which is what the reference file shows.
+  if (shape === "rect") {
+    for (const offset of [49, 50, 51]) main[offset] = 2;
+  }
   main.writeDoubleLE(pad.rotationDeg ?? 0, 52);
   // PLATED, at offset 60. Derived from the reader's own field order rather than
   // guessed: 13 common + 8 location + 24 sizes + 4 hole + 3 shapes + 8 rotation.
   // Without it the hole is written but read back as unplated, which is a hole
   // with no copper in the barrel: mechanically present, electrically absent.
-  if (throughHole) main[60] = 1;
+  if (throughHole && pad.plated !== false) main[60] = 1;
 
   // The solder mask clearance the DATASHEET stated, where it stated one.
   //
@@ -279,11 +288,34 @@ function padRecord(
   // Second block: the per-layer size and shape stack. This is where the rounded
   // rectangle actually lives; the first block's base shape stays "round".
   const stack = Buffer.from(PAD_SIZE_SHAPE_TEMPLATE);
-  // The per-layer shapes ship as 9 (rounded rectangle). A circular pad overrides
-  // them to 1 (Round), matching the reference file, whose pads read back as
-  // 1/1/1 on every layer.
-  if (shape === "circle") {
-    for (let entry = 0; entry < 32; entry += 1) stack[532 + entry] = 1;
+  // Altium's native slot representation: hole shape 2, the slot's long axis,
+  // and a rotation relative to the pad. KiCad's oval drill states X/Y rather
+  // than an angle, so a vertical slot becomes 90 degrees and a horizontal one
+  // remains zero. The pad's own rotation is applied independently by Altium.
+  if (slotted) {
+    stack[262] = 2;
+    stack.writeInt32LE(toAltiumUnits(holeLength as number), 263);
+    stack.writeDoubleLE((pad.drillHeightMm as number) > (pad.drillWidthMm as number) ? 90 : 0, 267);
+  }
+  // The per-layer shapes ship as 9 (rounded rectangle). Round and rectangular
+  // pads override them with native PCBPadShape values recovered by both
+  // independent readers. Altium defines an oval as its native Round shape with
+  // unequal X/Y sizes, so circle and oval deliberately share shape code 1;
+  // their already-written dimensions distinguish them without approximation.
+  if (shape === "circle" || shape === "oval" || shape === "rect") {
+    const encoded = shape === "rect" ? 2 : 1;
+    stack[531] = 0;
+    for (let entry = 0; entry < 32; entry += 1) stack[532 + entry] = encoded;
+  } else {
+    const ratio = pad.cornerRadiusRatio ?? 0.25;
+    if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 0.5) {
+      throw new AltiumEmitError(`Pad ${pad.number} has a corner-radius ratio Altium cannot write exactly.`);
+    }
+    const percentage = Math.round(ratio * 200);
+    if (Math.abs(percentage / 200 - ratio) > 1e-9) {
+      throw new AltiumEmitError(`Pad ${pad.number} has a corner-radius ratio finer than Altium's one-percent encoding.`);
+    }
+    for (let entry = 0; entry < 32; entry += 1) stack[564 + entry] = percentage;
   }
   for (let layer = 0; layer < 29; layer += 1) {
     stack.writeInt32LE(sizeX, layer * 4);
@@ -606,7 +638,7 @@ function modelsDataStream(modelId: string, modelName: string, checksum: number):
  * Z extent is the package height. If the text does not yield one, the body is
  * still written with a zero height rather than a guessed one.
  */
-function buildModel(step: { name: string; text: string }, seed: string) {
+function buildModel(step: { name: string; text: string; heightMm?: number }, seed: string) {
   const text = Buffer.from(step.text, "utf8");
   const guid = identityGuid(`${seed}:model`).toString("hex").toUpperCase();
   const id = `{${guid.slice(0, 8)}-${guid.slice(8, 12)}-${guid.slice(12, 16)}-${guid.slice(16, 20)}-${guid.slice(20, 32)}}`;
@@ -615,7 +647,7 @@ function buildModel(step: { name: string; text: string }, seed: string) {
     name: step.name,
     checksum: modelChecksum(text),
     compressed: deflateSync(text, { level: 9 }),
-    heightMm: stepHeightMm(step.text)
+    heightMm: step.heightMm ?? stepHeightMm(step.text)
   };
 }
 
@@ -744,7 +776,12 @@ export interface AltiumFootprintExtras {
    * 3D model by hand, once per part, which is the same friction the footprint
    * link removes on the schematic side.
    */
-  stepModel?: { name: string; text: string };
+  stepModel?: {
+    name: string;
+    text: string;
+    /** Cited package height when the STEP came from a vendor rather than Forge. */
+    heightMm?: number;
+  };
 }
 
 export function emitAltiumPcbLib(geometry: FootprintGeometry, extras: AltiumFootprintExtras = {}): Buffer {
@@ -776,8 +813,11 @@ export function emitAltiumPcbLib(geometry: FootprintGeometry, extras: AltiumFoot
   const records: Buffer[] = [
     // Copper. A pad carrying its own paste apertures has paste suppressed here
     // and drawn below, so the thermal land is not pasted solid.
-    ...geometry.pads.map((pad) =>
-      padRecord(pad, seed, { suppressPaste: (pad.pasteApertures?.length ?? 0) > 0 })
+    ...geometry.pads.map((pad, index) =>
+      padRecord(pad, `${seed}:copper:${index}`, {
+        suppressPaste: pad.hasPaste === false || (pad.pasteApertures?.length ?? 0) > 0,
+        suppressMask: pad.hasMask === false
+      })
     ),
     // The apertures themselves, on Top Paste. Emitted as pads because that is
     // the only primitive this writer has and it is what Altium reads back.

@@ -62,6 +62,7 @@ function generationConfig(): Record<string, unknown> {
 }
 
 export class GeminiExtractionModel implements ExtractionModel {
+  readonly supportsNativePdf = true;
   /**
    * Carries the model id and the thinking budget, because the bench cache keys
    * on this name and on the prompt, and on NOTHING else about the request.
@@ -95,6 +96,7 @@ export class GeminiExtractionModel implements ExtractionModel {
     // and says they are attached in that order, so the two must not diverge.
     const parts = [
       { text: buildPrompt(request) },
+      ...(request.sourceDocument ? [{ inlineData: { mimeType: request.sourceDocument.mimeType, data: request.sourceDocument.base64 } }] : []),
       ...request.images.map((image) => ({
         inlineData: { mimeType: image.mimeType, data: image.base64 }
       }))

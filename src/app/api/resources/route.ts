@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { clientKey, getDeploymentMode, RateLimiter } from "../../../lib/retrieval";
 
 export const runtime = "nodejs";
-export const maxDuration = 15;
+export const maxDuration = 60;
 const limiter = new RateLimiter(30, 60_000);
 
 export async function GET(request: Request) {

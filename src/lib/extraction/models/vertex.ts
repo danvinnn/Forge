@@ -93,6 +93,7 @@ export function vertexModelId(): string {
 }
 
 export class VertexExtractionModel implements ExtractionModel {
+  readonly supportsNativePdf = true;
   /**
    * Carries the transport, the model id and the thinking budget, because the
    * bench cache keys on this name and on the prompt and NOTHING else about the
@@ -146,6 +147,7 @@ export class VertexExtractionModel implements ExtractionModel {
     // says they are attached in that order, so the two must not diverge.
     const parts = [
       { text: buildPrompt(request) },
+      ...(request.sourceDocument ? [{ inlineData: { mimeType: request.sourceDocument.mimeType, data: request.sourceDocument.base64 } }] : []),
       ...request.images.map((image) => ({
         inlineData: { mimeType: image.mimeType, data: image.base64 }
       }))

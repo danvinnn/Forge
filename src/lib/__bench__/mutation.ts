@@ -180,8 +180,11 @@ const MUTATIONS: Mutation[] = [
     id: "M16",
     breaks: "surface-mount pads get no solder paste, so nothing is soldered at reflow",
     file: KICAD,
-    from: '(layers "F.Cu" "F.Paste" "F.Mask")',
-    to: '(layers "F.Cu" "F.Mask")'
+    // Retargeted when imported footprints gained explicit paste/mask intent.
+    // Mutate the default-present branch; explicit manufacturer omissions must
+    // remain omissions and are a different contract.
+    from: '...(pad.hasPaste === false ? [] : ["F.Paste"])',
+    to: "...[]"
   },
   {
     // REWRITTEN 2026-08-16, because the first version was a bad mutation.
@@ -222,8 +225,10 @@ const MUTATIONS: Mutation[] = [
     id: "M20",
     breaks: "through-hole barrels are unplated, so there is no connection through the board",
     file: PCBLIB,
-    from: "  if (throughHole) main[60] = 1;",
-    to: "  if (throughHole) main[60] = 0;"
+    // Retargeted when neutral geometry learned legitimate non-plated holes.
+    // This changes only pads that the geometry says must be plated.
+    from: "  if (throughHole && pad.plated !== false) main[60] = 1;",
+    to: "  if (throughHole && pad.plated !== false) main[60] = 0;"
   }
 ];
 

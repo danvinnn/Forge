@@ -14,13 +14,14 @@
  * on every part whose datasheet states a load condition.
  */
 
-import { readSpecRows } from "./pdfspans";
-import { readBlocks, buildable, canonicalValue, supportedCorners, disqualifies, fillMissing, valueAt, DEVICE_CLASSES, type Corner, type DeviceClass, type DeviceClassId, type ModelBlock, type ModelParameter } from "./model";
+import { readGainEquation, readSpecRows } from "./pdfspans";
+import { ALL_PARAMETERS, readBlocks, buildable, canonicalValue, supportedCorners, disqualifies, fillMissing, valueAt, DEVICE_CLASSES, type Corner, type DeviceClass, type DeviceClassId, type ModelBlock, type ModelParameter } from "./model";
 import { emitSubckt, emitAsy, NO_TRIM, type Trim } from "./emit";
 import { verify, type ConformanceReport } from "./verify";
 import { emitReferenceAsy, emitReferenceSubckt, verifyReference } from "./reference";
 import { emitComparatorAsy, emitComparatorSubckt, verifyComparator } from "./comparator";
 import { emitLdoAsy, emitLdoSubckt, verifyLdo } from "./ldo";
+import { emitInstrumentationAsy, emitInstrumentationSubckt, verifyInstrumentation } from "./instrumentation";
 import { confirmParameters, type ModelReadValue, type SpiceConfirmationReport } from "./confirm";
 import { applyModelIdentities, type Naming } from "./identify";
 import { tablePagesOf } from "./read-model";
@@ -287,13 +288,64 @@ export async function buildModel(
   supplied?: Partial<Record<ModelParameter, number>>,
   corrections?: ModelCorrection[]
 ): Promise<BuildResult> {
-  const read = await readSpecRows(pdfBytes);
+  const [tableRows, gainEquation] = await Promise.all([readSpecRows(pdfBytes), readGainEquation(pdfBytes)]);
+  const read: SpecRow[] = gainEquation
+    ? [...tableRows, {
+        parameter: gainEquation.equation,
+        key: "gainResistance",
+        symbol: "K",
+        conditions: "Printed instrumentation-amplifier gain equation",
+        unit: gainEquation.unit,
+        values: { min: null, typ: gainEquation.printed, max: null },
+        group: null,
+        scope: null,
+        page: gainEquation.page
+      }]
+    : tableRows;
   const modelRead = secondReader ? await secondReader(tablePagesOf(read)) : null;
+  // A visual reader may recover a row the text geometry never exposed. It can
+  // become evidence only when it names a supported quantity, quotes a unit and
+  // value, and cites a real source page. These rows remain `namedByModel`, so
+  // confirmation presents them as single-source rather than silently trusted.
+  const recovered = (modelRead ?? []).flatMap((candidate): SpecRow[] => {
+    if (!candidate.means || !ALL_PARAMETERS.includes(candidate.means as ModelParameter)) return [];
+    if (!candidate.unit || !Number.isInteger(candidate.page) || (candidate.page ?? 0) <= 0) return [];
+    if ([candidate.min, candidate.typ, candidate.max].every((value) => value === null)) return [];
+    const folded = (text: string | null | undefined) => (text ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const alreadyRead = read.some((row) =>
+      (row.group ?? null) === (candidate.group ?? null) &&
+      ((row.symbol && candidate.symbol && folded(row.symbol) === folded(candidate.symbol)) || folded(row.parameter) === folded(candidate.parameter))
+    );
+    if (alreadyRead) return [];
+    return [{
+      parameter: candidate.parameter,
+      key: candidate.means,
+      symbol: candidate.symbol ?? null,
+      conditions: candidate.conditions ?? null,
+      unit: candidate.unit,
+      values: { min: candidate.min, typ: candidate.typ, max: candidate.max },
+      group: candidate.group,
+      grade: candidate.grade ?? null,
+      scope: candidate.scope ?? null,
+      page: candidate.page!,
+      namedByModel: true,
+      recoveredByModel: true
+    }];
+  });
   // A row the vocabulary could not name but the model could. The numbers are
   // still ours; only the identity is single-source, and it ships flagged. This
   // runs BEFORE the blocks are grouped, because an unnamed row is invisible to
   // `readBlocks` and a part is refused for a gain that was read and discarded.
-  const { rows, named, conflicts, blocked } = applyModelIdentities(read, modelRead);
+  const identified = applyModelIdentities([...read, ...recovered], modelRead);
+  const rows = identified.rows;
+  // A recovered row and the model answer it came from are ONE reading, not two
+  // agreeing readings. Recording its identity here makes the shared
+  // confirmation policy flag it rather than self-confirming it.
+  const named = [
+    ...identified.named,
+    ...recovered.map((row) => ({ parameter: row.parameter, key: row.key!, page: row.page }))
+  ];
+  const { conflicts, blocked } = identified;
   const blocks = withCorrections(withSupplied(readBlocks(rows), supplied), corrections);
 
   // WHICH KIND OF PART, from what the document states.
@@ -403,6 +455,22 @@ export async function buildModel(
   const alternatives = ready.filter((b) => b !== chosen);
 
   const corners = supportedCorners(chosen, deviceClass);
+
+  if (deviceClass.id === "instrumentation") {
+    const instrumentationSubckt = emitInstrumentationSubckt(chosen, { partNumber });
+    return {
+      ...base,
+      deviceClass,
+      block: chosen,
+      blockChosenBy,
+      alternatives,
+      subckt: instrumentationSubckt,
+      asy: emitInstrumentationAsy(partNumber),
+      report: await verifyInstrumentation(instrumentationSubckt, chosen, partNumber, corners),
+      confirmations: confirmParameters(chosen, rows, modelRead, { named, conflicts }),
+      refusal: null
+    };
+  }
 
   // A REFERENCE IS NOT FITTED. The amplifier's fit loop exists because its
   // parameters are specified at the pins under a load, so the printed number

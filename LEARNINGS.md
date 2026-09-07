@@ -2665,7 +2665,8 @@ was measured through a door the customer cannot open.
 
 ## And then the fix repeated the shape
 
-The repair is a per-request nonce issued from `src/middleware.ts`, which is
+The repair is a per-request nonce issued from `src/proxy.ts` (renamed from the
+Next 15 `middleware.ts` convention), which is
 stricter than the alternative: `'unsafe-inline'` would also make the app run, by
 admitting every inline script including an injected one, which is the exact
 thing the original policy existed to stop.
@@ -6119,3 +6120,17 @@ while missing one staggered header. Declare the independent risk cells, solve
 minimum set cover exactly, and keep the full deterministic census free. The
 small panel proves breadth; it does not estimate prevalence, so never gate its
 percentage as though it were a random sample.
+
+## Discovery is not recovery until the artifact reaches export
+
+Classifying a manufacturer link as CAD proved only that Forge could see it. A
+STEP model is neither copper nor evidence from which copper should be inferred;
+it needs its own import type, package-aware selection, retained UI state, and
+format-specific export path. Test the entire handoff from resource POST through
+the outgoing model request and final archive, not a filename in status prose.
+
+Some formats duplicate facts outside the artifact they embed. Native Altium
+stores component height alongside a STEP payload, while KiCad can reference the
+payload without that extra fact. Ask for the missing height only for the output
+that requires it, and never fill the duplicate field with zero merely because
+the authoritative model itself is usable.

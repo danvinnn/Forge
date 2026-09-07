@@ -106,8 +106,18 @@ test("a normal part number produces a clean zip filename", async () => {
 test("an oversized declared body is refused before JSON parsing", async () => {
   const req = new Request("http://test/api/export", {
     method: "POST",
-    headers: { "content-type": "application/json", "content-length": String(5_000_000) },
+    headers: { "content-type": "application/json", "content-length": String(13_000_000) },
     body: JSON.stringify({ part: partWith("X"), format: "kicad" })
+  });
+  const res = await exportPOST(req);
+  assert.equal(res.status, 413);
+});
+
+test("an oversized body without Content-Length is still refused", async () => {
+  const req = new Request("http://test/api/export", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ padding: "x".repeat(12_000_001) })
   });
   const res = await exportPOST(req);
   assert.equal(res.status, 413);

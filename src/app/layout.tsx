@@ -6,7 +6,7 @@ import "./globals.css";
  *
  * ## Why this is not a performance decision
  *
- * `src/middleware.ts` issues a fresh nonce per request and Next stamps it onto
+ * `src/proxy.ts` issues a fresh nonce per request and Next stamps it onto
  * the scripts it emits. It can only do that while it is RENDERING a request. A
  * statically prerendered route has its HTML written at build time, when no
  * request and therefore no nonce exists, so Next emits its bootstrap with no

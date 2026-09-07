@@ -10,7 +10,7 @@ const securityHeaders = [
   // Disallow being framed, so the UI cannot be used in a clickjacking overlay.
   { key: "X-Frame-Options", value: "DENY" },
   // The Content-Security-Policy is NOT here. It carries a per-request nonce, so
-  // it is issued by `src/middleware.ts`, which explains why at length. It must
+  // it is issued by `src/proxy.ts`, which explains why at length. It must
   // not also be set here: two CSP headers are enforced as their INTERSECTION,
   // so a static `script-src 'self'` alongside the nonce policy would go on
   // blocking the framework's own bootstrap and the app would stay dead while

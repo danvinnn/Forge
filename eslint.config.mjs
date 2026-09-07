@@ -59,8 +59,8 @@ export default [
     plugins: { "@typescript-eslint": tsPlugin, "@next/next": next },
     rules: {
       ...tsPlugin.configs.recommended.rules,
-      ...next.flatConfig.recommended.rules,
-      ...next.flatConfig.coreWebVitals.rules,
+      ...next.configs.recommended.rules,
+      ...next.configs["core-web-vitals"].rules,
       // TypeScript already reports these, and more precisely: the base rule
       // does not understand types, overloads or declaration merging.
       "no-undef": "off",

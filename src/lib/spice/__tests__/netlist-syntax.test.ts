@@ -26,6 +26,7 @@ import { emitSubckt } from "../emit";
 import { emitReferenceSubckt } from "../reference";
 import { emitComparatorSubckt } from "../comparator";
 import { emitLdoSubckt } from "../ldo";
+import { emitInstrumentationSubckt } from "../instrumentation";
 import type { SpecRow } from "../specs";
 
 function row(key: string, values: Partial<SpecRow["values"]>, unit: string, conditions: string | null = null): SpecRow {
@@ -73,11 +74,17 @@ function everyNetlist(): Array<{ emitter: string; netlist: string }> {
     row("loadRegulationOverRange", { typ: 30, max: 100 }, "mV", "IO = 5 mA to 1.5 A"),
     row("quiescentCurrent", { typ: 4.3, max: 6 }, "mA")
   ])[0];
+  const instrumentation = readBlocks([
+    row("gainResistance", { typ: 100 }, "kOhm"),
+    row("offsetVoltage", { typ: 25 }, "uV"),
+    row("quiescentCurrent", { typ: 1 }, "mA")
+  ])[0];
   return [
     { emitter: "amplifier", netlist: emitSubckt(amplifier, { partNumber: "PART-SP" }) },
     { emitter: "reference", netlist: emitReferenceSubckt(reference, { partNumber: "PART-SP" }) },
     { emitter: "comparator", netlist: emitComparatorSubckt(comparator, { partNumber: "PART-SP" }) },
-    { emitter: "ldo", netlist: emitLdoSubckt(ldo, { partNumber: "PART-SP" }) }
+    { emitter: "ldo", netlist: emitLdoSubckt(ldo, { partNumber: "PART-SP" }) },
+    { emitter: "instrumentation", netlist: emitInstrumentationSubckt(instrumentation, { partNumber: "PART-SP" }) }
   ];
 }
 

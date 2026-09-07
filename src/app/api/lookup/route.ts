@@ -17,6 +17,7 @@ import { makeExtractionModel, runExtraction } from "../../../lib/extraction";
 import { SpendLimitReached } from "../../../lib/spend";
 import { SecondPassFailedError } from "../../../lib/extraction/contracts";
 import {
+  DOCUMENT_READ_ROUTE_BUDGET_MS,
   ModelDeadlineError,
   modelBudgetMs,
   withDeadline,
@@ -112,16 +113,16 @@ const RENDER_SHARE_OF_BUDGET = 1 / 3;
 
 export const runtime = "nodejs";
 // Ceiling so a slow retrieval or parse cannot hold a serverless function open indefinitely.
-// Raised from 30 on 2026-08-20 with `/api/parse`; the reasoning is recorded
-// there. This route ALSO fetches the PDF over the network before it starts, so
-// it has less of the budget left than the other one and needs it more.
-export const maxDuration = 150;
+// Raised with `/api/parse`; the reasoning is recorded there. This route ALSO
+// fetches the PDF over the network before it starts, so it has less of the
+// budget left than the other one and needs the same 240-second ceiling more.
+export const maxDuration = 240;
 
 /**
  * The model pass gets a budget carved out of this route's own, exactly as on
  * `/api/parse`. See `extraction/budget.ts` for the measured numbers.
  */
-const ROUTE_BUDGET_MS = maxDuration * 1000;
+const ROUTE_BUDGET_MS = DOCUMENT_READ_ROUTE_BUDGET_MS;
 
 // Bounded on purpose. Real manufacturer part numbers top out well under 64 characters, and these
 // strings are interpolated into vendor URLs and search queries, so an unbounded input is both a
@@ -206,7 +207,7 @@ async function extractPart(
   //
   // This route ran the model with no budget at all while the other one carved
   // one out, checked it was worth asking, and raced the call against it. Both
-  // have `maxDuration = 150`, a model call can take 90 seconds, and THIS route
+  // have `maxDuration = 240`, a typical model read takes about 135 seconds, and THIS route
   // spends part of its budget fetching the PDF over the network first, so it is
   // the likelier of the two to be killed by the platform. Being killed costs the
   // user the record that had already succeeded and returns a 504, which is

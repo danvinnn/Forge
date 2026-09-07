@@ -57,6 +57,10 @@ function maskMargin(pad: Pad): string {
   return pad.solderMaskMarginMm === undefined ? "" : ` (solder_mask_margin ${mm(pad.solderMaskMarginMm)})`;
 }
 
+function roundrectRatio(pad: Pad): string {
+  return pad.shape === "roundrect" ? ` (roundrect_rratio ${pad.cornerRadiusRatio ?? 0.25})` : "";
+}
+
 function mm(value: number): string {
   return value.toFixed(3);
 }
@@ -344,7 +348,7 @@ export function emitKicadFootprint(geometry: FootprintGeometry, links: KicadLink
     // How the part mounts, stated. KiCad treats a footprint with no `attr` as
     // through-hole: a surface-mount part without it lands in the wrong DRC
     // category and is excluded from the position file the assembler works from.
-    geometry.pads.some((pad) => pad.mounting === "through-hole") ? "  (attr through_hole)" : "  (attr smd)",
+    geometry.pads.some((pad) => pad.number && pad.mounting === "through-hole") ? "  (attr through_hole)" : "  (attr smd)",
     `  (property "Reference" "U" (at 0 ${mm(-geometry.body.halfHeightMm - 1.2)} 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))`,
     `  (property "Value" "${kicadString(geometry.partNumber)}" (at 0 ${mm(geometry.body.halfHeightMm + 1.2)} 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))`,
     // The designator again, inside the body on the fabrication layer, which is
@@ -397,18 +401,26 @@ export function emitKicadFootprint(geometry: FootprintGeometry, links: KicadLink
       // a generator bug into a board with unplated pads that looks fine in CAD.
       // The geometry always carries the drill; if it ever does not, that is worth
       // failing loudly for.
-      if (!(pad.drillMm && pad.drillMm > 0)) {
+      const roundDrill = pad.drillMm && pad.drillMm > 0 ? `(drill ${mm(pad.drillMm)})` : null;
+      const slotDrill = pad.drillWidthMm && pad.drillHeightMm && pad.drillWidthMm > 0 && pad.drillHeightMm > 0
+        ? `(drill oval ${mm(pad.drillWidthMm)} ${mm(pad.drillHeightMm)})`
+        : null;
+      if (!roundDrill && !slotDrill) {
         throw new Error(`Pad ${pad.number} is through-hole with no drill size, so no footprint is written.`);
       }
+      const padKind = pad.plated === false ? "np_thru_hole" : "thru_hole";
+      const layers = ["*.Cu", ...(pad.hasMask === false ? [] : ["*.Mask"])].map((layer) => `"${layer}"`).join(" ");
       lines.push(
-        `  (pad "${kicadString(pad.number)}" thru_hole ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}${pad.rotationDeg ? ` ${mm(pad.rotationDeg)}` : ""}) ` +
-          `(size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (drill ${mm(pad.drillMm)}) (layers "*.Cu" "*.Mask")` +
-          `${maskMargin(pad)} (remove_unused_layers no)${pad.shape === "roundrect" ? " (roundrect_rratio 0.25)" : ""})`
+        `  (pad "${kicadString(pad.number)}" ${padKind} ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}${pad.rotationDeg ? ` ${mm(pad.rotationDeg)}` : ""}) ` +
+          `(size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) ${roundDrill ?? slotDrill} (layers ${layers})` +
+          `${maskMargin(pad)}${pad.plated === false ? "" : " (remove_unused_layers no)"}${roundrectRatio(pad)})`
       );
       continue;
     }
+    const layers = ["F.Cu", ...(pad.hasPaste === false ? [] : ["F.Paste"]), ...(pad.hasMask === false ? [] : ["F.Mask"])]
+      .map((layer) => `"${layer}"`).join(" ");
     lines.push(
-      `  (pad "${kicadString(pad.number)}" smd ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}${pad.rotationDeg ? ` ${mm(pad.rotationDeg)}` : ""}) (size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (layers "F.Cu" "F.Paste" "F.Mask")${maskMargin(pad)}${pad.shape === "roundrect" ? " (roundrect_rratio 0.25)" : ""})`
+      `  (pad "${kicadString(pad.number)}" smd ${pad.shape} (at ${mm(pad.centre.xMm)} ${mm(pad.centre.yMm)}${pad.rotationDeg ? ` ${mm(pad.rotationDeg)}` : ""}) (size ${mm(pad.widthMm)} ${mm(pad.heightMm)}) (layers ${layers})${maskMargin(pad)}${roundrectRatio(pad)})`
     );
   }
 

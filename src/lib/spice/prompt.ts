@@ -37,6 +37,7 @@ export const SPEC_TABLE_SCHEMA = `{
       "columnGroups": ["the label printed above each MIN/TYP/MAX group, in left-to-right order. Use [] when the table has ONE group with no label above it."],
       "rows": [
         {
+          "page": "the 1-indexed PDF page where this row is printed",
           "parameter": "the description exactly as printed",
           "symbol": "the symbol exactly as printed, or null if none is printed",
           "means": "which standard quantity this row states, from the list below, or null",
@@ -143,6 +144,30 @@ WHICH STANDARD QUANTITY EACH ROW STATES
     overloadRecovery    overload or overvoltage recovery time
     supplyVoltage       operating or specified supply voltage
     channelSeparation   channel separation or crosstalk
+    outputVoltage       nominal regulated or reference output voltage
+    lineRegulation      reference output slope with input, printed in ppm/V
+    loadRegulation      reference output slope with load, printed in ppm/A or ppm/mA
+    outputDrift         reference output temperature drift, printed in ppm/degree
+    initialAccuracy     initial output-voltage accuracy, printed as percent or V/V
+    dropoutVoltage      regulator input-to-output dropout or headroom voltage
+    lineRegulationOverRange
+                        regulator output CHANGE over a stated input range, in V or percent
+    loadRegulationOverRange
+                        regulator output CHANGE over a stated load range, in V or percent
+    propagationDelay    comparator propagation delay or response time
+    outputLowVoltage    comparator low-level or saturation output voltage
+    outputSinkCurrent   comparator stated output sink current
+    outputLeakageCurrent
+                        comparator high-state or off-state output leakage
+    hysteresis          comparator input hysteresis voltage
+    gainResistance      the resistance numerator K printed in an instrumentation-
+                        amplifier law G = 1 + K/RG or RG = K/(G-1)
+
+  For a printed instrumentation-amplifier gain law, return one row even when it
+  is outside a table: copy the equation exactly into "parameter", set "means"
+  to "gainResistance", and report only the printed numerator K and its ohmic
+  unit as the typical value. Do not infer K from example gains or resistor
+  tables, and do not supply a family-typical constant.
 
   This is a NAMING question, not a reading one. Do not change what you report
   for the description, the unit or the values because of it. Use null whenever
@@ -176,6 +201,8 @@ export interface ModelSpecValues {
 
 /** One row of a specification table as the model reports it. */
 export interface ModelSpecRow {
+  /** 1-indexed PDF page where the row is printed. */
+  page?: number | null;
   parameter: string;
   symbol: string | null;
   /** Which standard quantity the model says this row states, or null. */
@@ -214,6 +241,7 @@ export function flattenModelReading(reading: ModelSpecReading): Array<{
   min: number | null;
   typ: number | null;
   max: number | null;
+  page: number | null;
 }> {
   const out = [];
   for (const table of reading.tables ?? []) {
@@ -230,7 +258,8 @@ export function flattenModelReading(reading: ModelSpecReading): Array<{
           scope: table.appliesTo,
           min: value.min,
           typ: value.typ,
-          max: value.max
+          max: value.max,
+          page: Number.isInteger(row.page) && (row.page ?? 0) > 0 ? row.page! : null
         });
       }
     }

@@ -32,6 +32,7 @@ import { assertUnderLimit, recordSpend } from "../spend";
 function metered(model: ExtractionModel): ExtractionModel {
   return {
     name: model.name,
+    supportsNativePdf: model.supportsNativePdf,
     isConfigured: () => model.isConfigured(),
     async extract(request: ExtractionRequest): Promise<ExtractionResult> {
       assertUnderLimit(model.name);
@@ -62,18 +63,26 @@ export async function makeExtractionModel(mode: DeploymentMode): Promise<Extract
     //
     // Both are dynamic imports on this branch only, which is what keeps them out
     // of an air-gapped process. Enforced by the air-gap guard test, not by care.
+    let vertex: ExtractionModel | null = null;
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.FORGE_VERTEX_PROJECT) {
       const { VertexExtractionModel } = await import("./models/vertex");
       const model = new VertexExtractionModel();
-      if (model.isConfigured()) return metered(model);
+      if (model.isConfigured()) vertex = metered(model);
     }
 
     // Cloud model. Only ever loaded on the commercial path.
+    let gemini: ExtractionModel | null = null;
     if (process.env.GOOGLE_GEMINI_API_KEY) {
       const { GeminiExtractionModel } = await import("./models/gemini");
       const model = new GeminiExtractionModel();
-      if (model.isConfigured()) return metered(model);
+      if (model.isConfigured()) gemini = metered(model);
     }
+    if (vertex && gemini) {
+      const { withProviderFallback } = await import("./models/fallback");
+      return withProviderFallback(vertex, gemini);
+    }
+    if (vertex) return vertex;
+    if (gemini) return gemini;
     // A commercial deploy may still prefer a self-hosted model.
     const local = await makeLocalModel();
     if (local) return metered(local);

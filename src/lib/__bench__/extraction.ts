@@ -66,7 +66,7 @@ import { DIMENSION_ORACLE } from "./dimension-oracle";
 import { sameOutlineCode } from "../packagevariants";
 import { loadBenchEnv } from "./env";
 import { getDeploymentMode } from "../retrieval/deployment";
-import { modelBudgetMs, withDeadline } from "../extraction/budget";
+import { DOCUMENT_READ_ROUTE_BUDGET_MS, modelBudgetMs, withDeadline } from "../extraction/budget";
 
 const PINOUT_ORACLE_SIZE = Object.keys(PINOUT_ORACLE).length;
 
@@ -618,7 +618,7 @@ const pct = (n: number, d: number) => (d === 0 ? "  n/a" : `${String(Math.round(
  * the bench and not to the product: counting it would fail parts for a rolling
  * window that production does not have. See `CacheStats.pacedMs`.
  */
-const ROUTE_BUDGET_MS = 150_000;
+const ROUTE_BUDGET_MS = DOCUMENT_READ_ROUTE_BUDGET_MS;
 
 async function main() {
   if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });

@@ -32,6 +32,9 @@ interface OraclePad {
   location: { x: number; y: number };
   sizeTop: { x: number; y: number };
   holeSize: number;
+  holeShape: number | null;
+  holeSlotLength: number | null;
+  holeRotation: number | null;
   shapeTop: number;
   topLayerShape: number | null;
   topCornerRadius: number | null;
@@ -210,6 +213,46 @@ test("the pad comes back at the position and size it was written at", () => {
   assert.equal(pad.rotation, 0);
   assert.equal(pad.topLayerShape, 9, "the land is a rounded rectangle");
   assert.equal(pad.topCornerRadius, 50, "at Altium's default corner radius");
+});
+
+test("native rectangular pads and stated corner radii survive the Altium writer", () => {
+  const geometry = onePadGeometry();
+  const shaped = {
+    ...geometry,
+    pads: [
+      { ...geometry.pads[0], number: "1", shape: "rect" as const },
+      {
+        ...geometry.pads[0],
+        number: "2",
+        centre: { xMm: -2.7, yMm: 1.27 },
+        shape: "roundrect" as const,
+        cornerRadiusRatio: 0.1
+      }
+    ]
+  };
+  const result = readBack(emitAltiumPcbLib(shaped));
+  const pads = result.parts[0].records.filter((record) => record.kind === "PcbPad") as unknown as OraclePad[];
+  const byNumber = new Map(pads.map((pad) => [pad.designator, pad]));
+
+  assert.equal(byNumber.get("1")?.shapeTop, 2, "the base pad is rectangular");
+  assert.equal(byNumber.get("1")?.topLayerShape, 2, "the top-layer stack is rectangular too");
+  assert.equal(byNumber.get("2")?.topLayerShape, 9, "the rounded pad remains a rounded rectangle");
+  assert.equal(byNumber.get("2")?.topCornerRadius, 20, "0.1 of the short dimension is Altium's 20-percent radius");
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("native oval pads survive as Altium Round shapes with unequal axes", () => {
+  const geometry = onePadGeometry();
+  const result = readBack(emitAltiumPcbLib({ ...geometry, pads: [{ ...geometry.pads[0], shape: "oval" }] }));
+  const pad = result.parts[0].records.find((record) => record.kind === "PcbPad") as unknown as OraclePad;
+  const mm = (mils: number) => mils * 0.0254;
+
+  assert.equal(pad.shapeTop, 1, "Altium encodes an oval as its Round pad shape");
+  assert.equal(pad.topLayerShape, 1, "the top-layer stack uses the same native Round shape");
+  assert.ok(Math.abs(mm(pad.sizeTop.x) - 1.55) < 0.001);
+  assert.ok(Math.abs(mm(Math.abs(pad.sizeTop.y)) - 0.6) < 0.001);
+  assert.notEqual(pad.sizeTop.x, Math.abs(pad.sizeTop.y), "unequal axes are what make the native Round shape oval");
+  assert.deepEqual(result.diagnostics, []);
 });
 
 test("the footprint carries the drawing as well as the copper", () => {
@@ -530,6 +573,30 @@ test("the hole is the size the geometry asked for, not a default", () => {
   const pad = result.parts[0].records.find((record) => record.kind === "PcbPad")!;
   // 0.7 mm expressed in mils, which is the unit the reader reports.
   assert.ok(Math.abs(Number(pad.holeSize) - 0.7 / 0.0254) < 0.1, `hole came back as ${pad.holeSize} mil`);
+});
+
+test("a slotted drill keeps both axes and orientation", () => {
+  const geometry = onePadGeometry();
+  const result = readBack(emitAltiumPcbLib({
+    ...geometry,
+    pads: [{
+      ...geometry.pads[0],
+      mounting: "through-hole",
+      shape: "oval",
+      plated: true,
+      drillWidthMm: 0.8,
+      drillHeightMm: 1.6
+    }]
+  }));
+  const pad = result.parts[0].records.find((record) => record.kind === "PcbPad") as unknown as OraclePad;
+  const mm = (mils: number) => mils * 0.0254;
+
+  assert.equal(pad.holeShape, 2, "Altium hole-shape 2 is a round-ended slot");
+  assert.ok(Math.abs(mm(pad.holeSize) - 0.8) < 0.001, "the short axis is the slot width");
+  assert.ok(pad.holeSlotLength !== null);
+  assert.ok(Math.abs(mm(pad.holeSlotLength) - 1.6) < 0.001, "the long axis is the slot length");
+  assert.equal(pad.holeRotation, 90, "a Y-long KiCad slot is vertical relative to the pad");
+  assert.deepEqual(result.diagnostics, []);
 });
 
 test("a through-hole pad with no drill is refused rather than written as solid copper", () => {

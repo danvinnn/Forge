@@ -22,9 +22,9 @@
  * second reading was available.
  */
 
-import { renderPages } from "../pagerender";
+import { pdfPageCount, renderPages } from "../pagerender";
 import { assertUnderLimit, recordSpend } from "../spend";
-import { SPEC_TABLE_PROMPT, flattenModelReading, type ModelSpecReading } from "./prompt";
+import { SPEC_TABLE_PROMPT, SPEC_TABLE_SCHEMA, flattenModelReading, type ModelSpecReading } from "./prompt";
 import { toSI } from "./units";
 import type { ModelReadValue } from "./confirm";
 import type { SpecRow } from "./specs";
@@ -45,15 +45,23 @@ export interface SecondReading {
   /** Why there is no second reading, when there is not. Never a silent null. */
   unavailable: string | null;
   pages: number[];
+  /** Concrete cloud transport that returned the independent reading. */
+  answeredBy?: Exclude<SecondReadingProvider, null>;
 }
 
 export type SecondReadingProvider = "vertex" | "gemini" | null;
 
-/** Mirrors the commercial extraction factory: Vertex wins when both are configured. */
+/** Ordered exactly like the commercial extraction factory, including failover. */
+export function secondReadingProviders(): Array<Exclude<SecondReadingProvider, null>> {
+  const providers: Array<Exclude<SecondReadingProvider, null>> = [];
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.FORGE_VERTEX_PROJECT) providers.push("vertex");
+  if (process.env.GOOGLE_GEMINI_API_KEY) providers.push("gemini");
+  return providers;
+}
+
+/** The preferred provider, retained for diagnostics and existing callers. */
 export function secondReadingProvider(): SecondReadingProvider {
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.FORGE_VERTEX_PROJECT) return "vertex";
-  if (process.env.GOOGLE_GEMINI_API_KEY) return "gemini";
-  return null;
+  return secondReadingProviders()[0] ?? null;
 }
 
 /**
@@ -120,8 +128,10 @@ export function parseReading(text: string): ModelSpecReading | null {
  * of them is kHz and the other MHz, and a false confirmation is the one outcome
  * this product may never produce.
  */
-export function toComparable(reading: ModelSpecReading): ModelReadValue[] {
-  return flattenModelReading(reading)
+type FlatModelRow = ReturnType<typeof flattenModelReading>[number];
+
+function comparableRows(rows: FlatModelRow[]): ModelReadValue[] {
+  return rows
     .filter((row) => row.unit === null || toSI(1, row.unit) !== null)
     .map((row) => ({
       parameter: row.parameter,
@@ -151,10 +161,44 @@ export function toComparable(reading: ModelSpecReading): ModelReadValue[] {
       // makes every comparison miss, silently, and report a corroborated part as
       // single-source.
       group: typeof row.group === "string" && row.group.trim() !== "" && !/^\d+$/.test(row.group.trim()) ? row.group : null,
+      page: row.page,
+      conditions: row.conditions,
       min: numeric(row.min),
       typ: numeric(row.typ),
       max: numeric(row.max)
     }));
+}
+
+export function toComparable(reading: ModelSpecReading): ModelReadValue[] {
+  return comparableRows(flattenModelReading(reading));
+}
+
+function rowIdentity(row: FlatModelRow): string {
+  return JSON.stringify([row.page, row.parameter, row.symbol, row.conditions, row.group, row.grade, row.scope]);
+}
+
+/** Numeric rows whose drawn unit was returned in a form Forge cannot interpret. */
+export function malformedUnitRows(reading: ModelSpecReading): FlatModelRow[] {
+  return flattenModelReading(reading).filter((row) =>
+    row.unit !== null &&
+    toSI(1, row.unit) === null &&
+    [row.min, row.typ, row.max].some((value) => numeric(value) !== null)
+  );
+}
+
+/** Applies only an independently re-read unit; the first reading still owns every value and label. */
+export function toComparableWithUnitRepairs(reading: ModelSpecReading, repair: ModelSpecReading): ModelReadValue[] {
+  const repairedUnits = new Map(
+    flattenModelReading(repair)
+      .filter((row) => row.unit !== null && toSI(1, row.unit) !== null)
+      .map((row) => [rowIdentity(row), row.unit] as const)
+  );
+  const rows = flattenModelReading(reading).map((row) => {
+    if (row.unit === null || toSI(1, row.unit) !== null) return row;
+    const unit = repairedUnits.get(rowIdentity(row));
+    return unit ? { ...row, unit } : row;
+  });
+  return comparableRows(rows);
 }
 
 /**
@@ -182,79 +226,138 @@ function numeric(value: unknown): number | null {
  * accidentally confirmed. Silence is not agreement.
  */
 export async function readWithModel(pdfBytes: ArrayBuffer, pages: number[]): Promise<SecondReading> {
-  if (pages.length === 0) return { values: null, unavailable: "no specification table pages were located", pages };
+  const providers = secondReadingProviders();
+  if (providers.length === 0) return { values: null, unavailable: "no model is configured for a second reading", pages };
 
-  const provider = secondReadingProvider();
-  if (!provider) return { values: null, unavailable: "no model is configured for a second reading", pages };
-
-  const rendered = await renderPages(pdfBytes, pages, { dpi: TABLE_DPI, maxPages: MAX_TABLE_PAGES });
-  if (rendered.length === 0) return { values: null, unavailable: "the specification pages could not be rendered", pages };
+  const rendered = pages.length > 0
+    ? await renderPages(pdfBytes, pages, { dpi: TABLE_DPI, maxPages: MAX_TABLE_PAGES })
+    : [];
+  // Same transport envelope as the CAD extraction path: base64 expands by
+  // roughly 4/3 and shares the request with the prompt. Whole-PDF recovery is
+  // used only when the deterministic reader located no table pages at all.
+  const nativePdf = pages.length === 0 && pdfBytes.byteLength <= 14 * 1024 * 1024
+    ? Buffer.from(pdfBytes).toString("base64")
+    : null;
+  if (pages.length > 0 && rendered.length === 0) return { values: null, unavailable: "the specification pages could not be rendered", pages };
+  if (pages.length === 0 && nativePdf === null) return { values: null, unavailable: "no specification table pages were located and the PDF is too large for native recovery", pages };
 
   // ONE definition of the model and Vertex endpoint, shared with the CAD path.
   const { modelId } = await import("../extraction/models/gemini");
-  const vertex = provider === "vertex" ? await import("../extraction/models/vertex") : null;
-  const model = vertex ? vertex.vertexModelId() : modelId();
-  const label = `${provider}:${model}`;
-  try {
-    // The ceiling is checked BEFORE the call, not after, so a run that would
-    // cross it never happens rather than being reported once it has.
-    assertUnderLimit(label);
-  } catch (error) {
-    return { values: null, unavailable: error instanceof Error ? error.message : "the spend ceiling was reached", pages };
-  }
+  const vertex = providers.includes("vertex") ? await import("../extraction/models/vertex") : null;
+  const attachments = [
+    ...(nativePdf ? [{ inlineData: { mimeType: "application/pdf", data: nativePdf } }] : []),
+    ...rendered.map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.base64 } }))
+  ];
+  const parts = [
+    { text: `${SPEC_TABLE_PROMPT}\n\n${nativePdf ? "The original PDF is attached. Inspect all of its pages, including image-only or damaged-text tables, and cite the 1-indexed PDF page on every row." : "The cited specification pages are attached as images."}` },
+    ...attachments
+  ];
+  const failures: string[] = [];
 
-  try {
-    const parts = [
-      { text: SPEC_TABLE_PROMPT },
-      ...rendered.map((image) => ({ inlineData: { mimeType: image.mimeType, data: image.base64 } }))
-    ];
-    let text: string;
-    let usage: { inputTokens: number; outputTokens: number } | undefined;
-    if (vertex) {
-      const { GoogleGenAI } = await import("@google/genai");
-      const client = new GoogleGenAI({
-        vertexai: true,
-        project: vertex.vertexProject(),
-        location: vertex.vertexLocation()
-      });
-      const response = await client.models.generateContent({
-        model,
-        contents: [{ role: "user", parts }],
-        config: { temperature: 0, responseMimeType: "application/json" }
-      });
-      text = response.text ?? "";
-      usage = response.usageMetadata
-        ? {
+  for (const provider of providers) {
+    const model = provider === "vertex" ? vertex!.vertexModelId() : modelId();
+    const label = `${provider}:${model}`;
+    try {
+      // The ceiling is checked BEFORE every call. A spend-policy refusal is not
+      // a provider outage and must not be bypassed through another billing door.
+      assertUnderLimit(label);
+    } catch (error) {
+      return { values: null, unavailable: error instanceof Error ? error.message : "the spend ceiling was reached", pages };
+    }
+
+    const generate = async (requestParts: typeof parts) => {
+      if (provider === "vertex") {
+        const { GoogleGenAI } = await import("@google/genai");
+        const client = new GoogleGenAI({ vertexai: true, project: vertex!.vertexProject(), location: vertex!.vertexLocation() });
+        const response = await client.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: requestParts }],
+          config: { temperature: 0, responseMimeType: "application/json" }
+        });
+        return {
+          text: response.text ?? "",
+          usage: response.usageMetadata ? {
             inputTokens: response.usageMetadata.promptTokenCount ?? 0,
-            outputTokens:
-              (response.usageMetadata.candidatesTokenCount ?? 0) +
-              (response.usageMetadata.thoughtsTokenCount ?? 0)
-          }
-        : undefined;
-    } else {
-      const { GoogleGenerativeAI } = await import("@google/generative-ai");
-      const client = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY!).getGenerativeModel({
+            outputTokens: (response.usageMetadata.candidatesTokenCount ?? 0) + (response.usageMetadata.thoughtsTokenCount ?? 0)
+          } : undefined
+        };
+      }
+      const client = new (await import("@google/generative-ai")).GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY!).getGenerativeModel({
         model,
         generationConfig: { temperature: 0, responseMimeType: "application/json" }
       });
-      const response = await client.generateContent({ contents: [{ role: "user", parts }] });
+      const response = await client.generateContent({ contents: [{ role: "user", parts: requestParts }] });
       const metadata = response.response.usageMetadata;
-      text = response.response.text();
-      usage = metadata
-        ? {
-            inputTokens: metadata.promptTokenCount ?? 0,
-            outputTokens:
-              (metadata.candidatesTokenCount ?? 0) +
-              ((metadata as { thoughtsTokenCount?: number }).thoughtsTokenCount ?? 0)
-          }
-        : undefined;
-    }
+      return {
+        text: response.response.text(),
+        usage: metadata ? {
+          inputTokens: metadata.promptTokenCount ?? 0,
+          outputTokens: (metadata.candidatesTokenCount ?? 0) + ((metadata as { thoughtsTokenCount?: number }).thoughtsTokenCount ?? 0)
+        } : undefined
+      };
+    };
+
+    try {
+    const initial = await generate(parts);
+    const text = initial.text;
+    const usage = initial.usage;
     recordSpend(label, usage);
 
     const reading = parseReading(text);
-    if (!reading) return { values: null, unavailable: "the model's reply was not the requested JSON", pages };
-    return { values: toComparable(reading), unavailable: null, pages };
-  } catch (error) {
-    return { values: null, unavailable: error instanceof Error ? error.message : "the second reading failed", pages };
+    if (!reading) {
+      failures.push(`${label}: the model's reply was not the requested JSON`);
+      continue;
+    }
+    let repairedReading: ModelSpecReading | null = null;
+    const malformed = malformedUnitRows(reading).slice(0, 16);
+    if (malformed.length > 0) {
+      const rows = malformed.map((row) => ({
+        page: row.page,
+        parameter: row.parameter,
+        symbol: row.symbol,
+        conditions: row.conditions,
+        group: row.group,
+        grade: row.grade,
+        scope: row.scope,
+        invalidUnit: row.unit
+      }));
+      const repairParts = [{
+        text: `Re-read ONLY the drawn unit glyph for each row listed below. The prior transcription is not parseable and may contain a replacement character. Preserve page, parameter, symbol, conditions, group, grade, scope, and numeric values exactly; change only the unit after inspecting the attached page pixels. Omit any row whose unit cannot be read confidently. Return this schema and no commentary:\n${SPEC_TABLE_SCHEMA}\n\nRows:\n${JSON.stringify(rows)}`
+      }, ...attachments];
+      try {
+        assertUnderLimit(label);
+        const repaired = await generate(repairParts);
+        recordSpend(label, repaired.usage);
+        repairedReading = parseReading(repaired.text);
+      } catch {
+        // The original independent reading is still useful. A failed focused
+        // recovery must not discard its valid rows or trigger a duplicate full
+        // read through another provider.
+        recordSpend(label, undefined);
+      }
+    }
+    const pageCount = nativePdf ? await pdfPageCount(pdfBytes) : null;
+    const values = (repairedReading ? toComparableWithUnitRepairs(reading, repairedReading) : toComparable(reading)).map((value) => ({
+      ...value,
+      // A page outside the source is not provenance. For focused renders, an
+      // answer can only cite one of the pages actually shown.
+      page: typeof value.page === "number" && (nativePdf ? pageCount !== null && value.page <= pageCount : pages.includes(value.page))
+        ? value.page
+        : null
+    }));
+    return {
+      values,
+      unavailable: null,
+      pages: nativePdf ? [...new Set(values.map((value) => value.page).filter((page): page is number => page !== null))] : pages,
+      answeredBy: provider
+    };
+    } catch (error) {
+      // Failed calls may still be billed. Record them before trying the second
+      // configured transport so provider failover cannot understate spend.
+      recordSpend(label, undefined);
+      failures.push(`${label}: ${error instanceof Error ? error.message : "the second reading failed"}`);
+    }
   }
+
+  return { values: null, unavailable: failures.join("; "), pages };
 }

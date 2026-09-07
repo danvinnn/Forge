@@ -27,3 +27,26 @@ export function sanitizeFileName(raw: string, fallback = "datasheet"): string {
 
   return `${cleaned}.pdf`;
 }
+
+/**
+ * Sanitizes a non-PDF artifact basename without lying about its format.
+ *
+ * `sanitizeFileName` intentionally normalizes every datasheet to `.pdf`. Using
+ * it for an imported `.kicad_mod` renamed the footprint to `.pdf`, after which
+ * the importer correctly refused it. Keep the actual extension while applying
+ * the same traversal, control-character and length protections.
+ */
+export function sanitizeArtifactFileName(raw: string, fallback = "vendor-artifact"): string {
+  const base = raw.split(/[\\/]/).pop() ?? "";
+  let cleaned = base
+    .replace(/[\u0000-\u001f]/g, "")
+    .replace(/[^A-Za-z0-9._+-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  if (!cleaned) cleaned = fallback;
+  if (cleaned.length > MAX_NAME_LENGTH) {
+    const extension = /(?:\.[A-Za-z0-9_+-]+)$/.exec(cleaned)?.[0] ?? "";
+    cleaned = `${cleaned.slice(0, Math.max(1, MAX_NAME_LENGTH - extension.length))}${extension}`;
+  }
+  return cleaned;
+}

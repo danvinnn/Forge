@@ -492,7 +492,7 @@ export function geometryViolations(geometry: FootprintGeometry, part: ResolvedPa
   // Paste-only apertures carry no pin number and are not lands.
   const lands = geometry.pads.filter((pad) => pad.number !== "");
 
-  // ONE LAND PER PIN, AND NO OTHERS.
+  // AT LEAST ONE LAND PER PIN, AND NO OTHERS.
   //
   // The check the SSOP-28 defect needed. A pad for a pin the part does not have
   // connects to nothing; a pin with no pad is a connection that silently does
@@ -521,7 +521,7 @@ export function geometryViolations(geometry: FootprintGeometry, part: ResolvedPa
 
   for (const number of wanted) {
     const count = seen.get(number) ?? 0;
-    if (count !== 1) problems.push(`pin ${number} has ${count} lands, not one`);
+    if (count === 0) problems.push(`pin ${number} has 0 lands`);
   }
   for (const [number, count] of seen) {
     if (!wanted.has(number)) problems.push(`land "${number}" belongs to no pin of this part (${count} of them)`);
@@ -561,6 +561,11 @@ export function geometryViolations(geometry: FootprintGeometry, part: ResolvedPa
   // side-count all produce, whichever of them is at fault.
   for (let left = 0; left < lands.length; left += 1) {
     for (let right = left + 1; right < lands.length; right += 1) {
+      // Manufacturer footprints legitimately build one terminal out of several
+      // copper shapes (split thermal lands, shield tabs and compound pads). They
+      // may touch because they are the same net; different terminal numbers may
+      // never touch.
+      if (lands[left].number === lands[right].number) continue;
       const a = extent(lands[left]);
       const b = extent(lands[right]);
       // MEETING COUNTS, NOT ONLY CROSSING. See `TOUCHING_MM`.
@@ -764,12 +769,16 @@ export function geometryViolations(geometry: FootprintGeometry, part: ResolvedPa
       ["x", pad.centre.xMm],
       ["y", pad.centre.yMm],
       ["width", pad.widthMm],
-      ["height", pad.heightMm]
+      ["height", pad.heightMm],
+      ["drill width", pad.drillWidthMm],
+      ["drill height", pad.drillHeightMm]
     ] as const) {
-      if (!Number.isFinite(value)) problems.push(`land ${pad.number || "(paste)"} has a non-finite ${what}`);
+      if (value !== undefined && !Number.isFinite(value)) problems.push(`land ${pad.number || "(mechanical)"} has a non-finite ${what}`);
     }
-    if (pad.mounting === "through-hole" && !(pad.drillMm && pad.drillMm > 0)) {
-      problems.push(`plated hole ${pad.number} has no drill size`);
+    const hasRoundDrill = (pad.drillMm ?? 0) > 0;
+    const hasSlot = (pad.drillWidthMm ?? 0) > 0 && (pad.drillHeightMm ?? 0) > 0;
+    if (pad.mounting === "through-hole" && !hasRoundDrill && !hasSlot) {
+      problems.push(`${pad.plated === false ? "mechanical" : "plated"} hole ${pad.number} has no drill size`);
     }
   }
 

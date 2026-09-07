@@ -55,7 +55,7 @@ import {
 import { checkFetchedDatasheet } from "./fetchcheck";
 import { loadBenchEnv } from "./env";
 import { getDeploymentMode } from "../retrieval/deployment";
-import { modelBudgetMs, withDeadline } from "../extraction/budget";
+import { DOCUMENT_READ_ROUTE_BUDGET_MS, modelBudgetMs, withDeadline } from "../extraction/budget";
 import {
   HOLDOUT_CACHE_DIR,
   HOLDOUT_CORPUS,
@@ -184,7 +184,7 @@ import { densityOf } from "../settings";
  * the bench and not to the product: counting it would fail parts for a rolling
  * window that production does not have. See `CacheStats.pacedMs`.
  */
-const ROUTE_BUDGET_MS = 150_000;
+const ROUTE_BUDGET_MS = DOCUMENT_READ_ROUTE_BUDGET_MS;
 
 async function main(): Promise<void> {
   if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });

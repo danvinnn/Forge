@@ -36,9 +36,8 @@
  *     hdiutil attach -nobrowse -readonly -mountpoint /tmp/kicadmnt <the .dmg>
  *     FORGE_KICAD_CLI=/tmp/kicadmnt/KiCad/KiCad.app/Contents/MacOS/kicad-cli npm run bench:kicad
  *
- * SKIPS RATHER THAN FAILS when the binary is absent, and says so. A machine
- * without KiCad has not proved anything, and a bench that goes red for a missing
- * tool is one people learn to ignore.
+ * An ordinary direct run skips when the binary is absent. `--gate` fails: a
+ * release command must not report success for a customer tool it never ran.
  *
  * Free: no network, no model, no spend.
  */
@@ -68,6 +67,7 @@ async function main(): Promise<void> {
   const cli = kicadCli();
   if (!cli) {
     console.log("\nNo kicad-cli found, so KiCad has not been asked anything. See this file's header.\n");
+    if (process.argv.includes("--gate")) process.exitCode = 2;
     return;
   }
   const version = spawnSync(cli, ["version"], { encoding: "utf8" }).stdout?.trim() ?? "unknown";

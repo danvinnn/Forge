@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { POST } from "../../app/api/identify/route";
+import { __setResolverOverride } from "../retrieval";
 
 const CACHE = path.join(process.cwd(), ".bench-cache");
 
@@ -26,6 +27,75 @@ test("a request with no file is refused by name, not by crash", async () => {
   const response = await POST(upload());
   assert.equal(response.status, 400);
   assert.equal((await response.json()).code, "UPLOAD_INVALID");
+});
+
+test("a typed lookup is validated before any retrieval", async () => {
+  const response = await POST(new Request("http://localhost/api/identify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ partNumber: "?" })
+  }));
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).code, "INPUT_INVALID");
+});
+
+const OPA333_LOOKUP = path.join(CACHE, "OPA333.pdf");
+test(
+  "a typed part is identified before any model read",
+  { skip: fs.existsSync(OPA333_LOOKUP) ? false : "no cached datasheet" },
+  async () => {
+    const bytes = fs.readFileSync(OPA333_LOOKUP);
+    __setResolverOverride({
+      name: "identify-route-fixture",
+      isConfigured: () => true,
+      async resolve() {
+        return {
+          bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+          fileName: "OPA333.pdf",
+          pdfUrl: "https://www.ti.com/lit/ds/symlink/opa333.pdf",
+          byteLength: bytes.byteLength,
+          sha256: "fixture",
+          resolvedBy: "identify-route-fixture"
+        };
+      }
+    });
+    try {
+      const response = await POST(new Request("http://localhost/api/identify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ partNumber: "OPA333" })
+      }));
+      assert.equal(response.status, 200);
+      const payload = await response.json() as Record<string, unknown>;
+      assert.equal(payload.partNumber, "OPA333");
+      assert.equal(payload.partNumberFrom, "user-input");
+      assert.equal(payload.sourceUrl, "https://www.ti.com/lit/ds/symlink/opa333.pdf");
+      assert.ok(Array.isArray(payload.packages));
+    } finally {
+      __setResolverOverride();
+    }
+  }
+);
+
+test("typed identification does not leak resolver failures", async () => {
+  __setResolverOverride({
+    name: "secret-fixture",
+    isConfigured: () => true,
+    async resolve() { throw new Error("token=do-not-leak internal.example"); }
+  });
+  try {
+    const response = await POST(new Request("http://localhost/api/identify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ partNumber: "OPA333" })
+    }));
+    assert.equal(response.status, 502);
+    const payload = await response.json() as Record<string, unknown>;
+    assert.equal(payload.code, "LOOKUP_FAILED");
+    assert.doesNotMatch(String(payload.error), /token|internal\.example/i);
+  } finally {
+    __setResolverOverride();
+  }
 });
 
 test("a file that is not a PDF is bad INPUT, not a server fault", async () => {
@@ -48,13 +118,14 @@ test(
 
     // Every field `SuiteWorkspace`'s `Identified` declares. A missing one is
     // `undefined` on the screen, which renders as nothing and looks deliberate.
-    for (const field of ["partNumber", "partNumberFrom", "manufacturer", "pageCount", "packages", "specPages", "outlinePage", "sha256", "fileName"]) {
+    for (const field of ["partNumber", "partNumberFrom", "manufacturer", "pageCount", "packages", "specPages", "outlinePage", "sha256", "fileName", "sourceUrl"]) {
       assert.ok(field in payload, `the screen reads ${field} and the route does not return it`);
     }
     // The part number is the FILE NAME, and the route says so rather than
     // letting a screen present it as something read off the page.
     assert.equal(payload.partNumber, "datasheet");
     assert.equal(payload.partNumberFrom, "file-name");
+    assert.equal(payload.sourceUrl, null, "an upload has no manufacturer URL to invent");
     assert.ok((payload.pageCount as number) > 1);
     assert.ok(Array.isArray(payload.packages));
     // 64 hex characters, so the screen's citation is a real digest.

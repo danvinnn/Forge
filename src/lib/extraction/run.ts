@@ -1016,6 +1016,9 @@ function combine(first: ExtractionResult, second: ExtractionResult, partNumber?:
 
   return {
     values,
+    ...(first.answeredBy || second.answeredBy
+      ? { answeredBy: [...new Set([first.answeredBy, second.answeredBy].filter((name): name is string => Boolean(name)))].join(" + ") }
+      : {}),
     ...(declined.length > 0 ? { declined } : {}),
     notes: [...(first.notes ?? []), ...(second.notes ?? [])],
     // EITHER pass failing to be read is enough to record it. Whether it matters
@@ -1140,10 +1143,32 @@ export async function runExtraction(
    */
   renderBudgetMs?: number
 ): Promise<ExtractionRun | null> {
-  const request = buildExtractionRequest(part, doc, fileName, partNumber);
-  if (!request) return null;
+  const builtRequest = buildExtractionRequest(part, doc, fileName, partNumber);
+  if (!builtRequest) return null;
+  // Cloud providers can inspect a PDF natively, including scans and documents
+  // whose text layer is too sparse to locate a useful page. It is a RECOVERY
+  // path, not the default: on ordinary text-bearing datasheets, native vision
+  // over the whole document was measured hitting the 90-second backstop while
+  // the established text + focused-render path completed and read the part.
+  // One page with 500 non-whitespace characters is enough for the model to name
+  // the relevant page; the focused render then supplies the drawing geometry.
+  // This is a document-structure test, not a part, vendor, or package rule.
+  // Inline document payloads share the provider's request-size envelope with
+  // the prompt and expand by roughly 4/3 during base64 encoding. The product
+  // accepts 50 MB PDFs, so attaching all of them would make a previously valid
+  // upload fail at the model transport. Larger documents keep the established
+  // text + focused rendered-page recovery path.
+  const NATIVE_PDF_INLINE_LIMIT_BYTES = 14 * 1024 * 1024;
+  const textCanLocatePages = doc.pages.some((page) => page.text.replace(/\s/g, "").length >= 500);
+  const request: ExtractionRequest = {
+    ...builtRequest,
+    ...(model.supportsNativePdf && !textCanLocatePages && pdfBytes.byteLength <= NATIVE_PDF_INLINE_LIMIT_BYTES
+      ? { sourceDocument: { mimeType: "application/pdf" as const, base64: Buffer.from(pdfBytes).toString("base64") } }
+      : {})
+  };
 
-  // Pass 1: the whole document, as text.
+  // Pass 1: the whole document as text, and as the original PDF where the
+  // provider supports it. In that case this is also the visual pass.
   const first = await model.extract(request);
 
   // Pass 2: the pages it asked to see.
@@ -1154,7 +1179,11 @@ export async function runExtraction(
   // pages rather than throwing, and a host with no working renderer produces
   // exactly the first-pass answer, which is a supported deployment rather than
   // an error.
-  const pages = requestedPages(first, doc);
+  // A native-document answer has already seen every page image. Do not ask the
+  // same provider to inspect a lossy render of a subset in a second paid call.
+  // Besides cost, this is a reliability rule: a failure on that redundant call
+  // used to discard the successful first answer at the caller boundary.
+  const pages = request.sourceDocument ? [] : requestedPages(first, doc);
   let second: ExtractionResult = { values: {} };
   let rendered: number[] = [];
   let images: RenderedPage[] = [];
@@ -1225,7 +1254,7 @@ export async function runExtraction(
   // build before this is tried again, and reading a denser figure more carefully
   // is not.
   return {
-    ...mergeModelValues(part, doc, combined, model.name, rendered),
+    ...mergeModelValues(part, doc, combined, combined.answeredBy ?? model.name, rendered),
     renderedPages: rendered,
     renderedImages: images,
     lookedAtPages: rendered.length > 0,

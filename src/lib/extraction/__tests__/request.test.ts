@@ -105,6 +105,21 @@ test("the first pass asks the model which pages to render, and attaches none", (
   assert.match(prompt, new RegExp(`at most ${MAX_PAGES_TO_MODEL} pages`));
 });
 
+test("a native PDF is one visual pass and does not request duplicate renders", () => {
+  const doc = familyDoc();
+  const request = buildExtractionRequest(buildPartRecord(doc, "ACME358.pdf"), doc, "ACME358.pdf");
+  assert.ok(request);
+  const prompt = buildPrompt({
+    ...request,
+    sourceDocument: { mimeType: "application/pdf", base64: "JVBERi0=" }
+  });
+
+  assert.match(prompt, /original PDF is attached/);
+  assert.doesNotMatch(prompt, /pagesWorthRendering/);
+  assert.match(prompt, /packagesInThisDocument/, "the native visual pass can still return per-package geometry");
+  assert.match(prompt, /one entry per package/);
+});
+
 // --- selecting the page a DRAWING is on -------------------------------------
 //
 // These guard the three defects that kept the package drawing out of the model's

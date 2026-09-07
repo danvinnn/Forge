@@ -35,7 +35,7 @@ import { logger } from "../logging";
 // kills the request first and the user gets a 504 instead of our clean DATASHEET_NOT_FOUND, which
 // throws away the graceful degradation the whole chain is built around. That reasoning is still
 // right. The NUMBER was picked to fit inside a 10-to-15 second serverless default, which is not the
-// host this product declares: `/api/lookup` and `/api/parse` both set `maxDuration = 150`.
+// host this product declares: `/api/lookup` and `/api/parse` both set `maxDuration = 240`.
 //
 // Then it was measured, assembling the SPICE amplifier corpus (`SPICE.md` Part IX). Of 28 parts the
 // chain reached 21 at 12 seconds and 27 at 60. SIX OF THE SEVEN MISSES WERE TIME, NOT ABSENCE: they
@@ -51,7 +51,8 @@ import { logger } from "../logging";
 //
 // A chain that spends its whole budget must still leave a full model call inside the route's own
 // ceiling, because overrunning does not produce a slow answer - it produces a 504 that throws away a
-// record which had already succeeded. At 45s that leaves 102s for a call measured at about 90.
+// record which had already succeeded. At 45s the current 240s route leaves 192s after the response
+// margin, which covers the measured 135s planning allowance without relying on the transport tail.
 //
 // The trade is real and it is a trade: a part that genuinely has no datasheet now takes 45 seconds
 // to say so instead of 12. That is the wrong shape for a person waiting at a prompt and the right

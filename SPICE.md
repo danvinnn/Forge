@@ -4199,3 +4199,154 @@ problems, including refusal → vendor upload → helper selection → adapter a
 the instance-value configuration path. Official LTspice 17.2.4 accepts all four
 generated representatives, a numeric-named 128-terminal subcircuit adapter,
 and every one of the 17 declared primitive `.MODEL` adapter contracts.
+
+---
+
+# Part XIV — release closure after the recovery audit, 2026-09-06
+
+This section supersedes the older current-state statements above; the earlier
+sections remain the experiment log and explain why the present rules exist.
+
+Forge now has five generated behavioral classes. Instrumentation amplifiers
+ship when the document explicitly prints `G = 1 + K/RG` or its algebraic
+inverse with an ohmic unit. `K` is read from the page and is never selected by
+part number, vendor, or family. The external resistor remains an ordinary model
+connection, and the conformance rig solves the emitted behavior back to the
+printed numerator. The compact holdout builds both unseen instrumentation
+amplifiers and passes their measurable checks.
+
+The SPICE visual reader now names every parameter consumed by all five classes.
+If the text layer locates no specification table, the commercial path reads the
+original PDF natively, including image-only pages. A model-only row can enter a
+block only with a supported physical quantity, a scalable printed unit, a
+numeric corner, and a valid 1-indexed source page. It is marked as visual-only:
+the same answer cannot corroborate itself, and the Suite shows the cited page
+and asks the user to verify the row and value. PDFs too large for the inline
+transport retain text plus focused-page recovery instead of failing the job.
+If a numeric visual row comes back with a malformed unit glyph, Forge re-reads
+only that unit from the same page pixels once before asking the user. The repair
+attaches by the row's full page/block/group identity and cannot replace the
+first reading's labels or numbers.
+
+Official-resource discovery now has a manufacturer-domain search fallback for
+the supported vendor registry. Only HTTPS resources on the identified
+manufacturer's domain are accepted. Archives with several usable footprints or
+models are resolved in the Suite by filename/package recognition rather than a
+download-unpack-reupload loop. Common standalone model extensions are accepted.
+A uniquely identified archive entry is selected automatically from the requested
+part number and selected CAD package. Archive order is never evidence: two
+equally plausible files still produce the recognition-based chooser.
+A ranked official CAD or SPICE artifact is imported and validated automatically
+for the selected intent; failed official URLs fall through silently, while an
+archive with several plausible files stops at the existing package/model
+chooser. An in-flight import is tied to the identified part so an old request
+cannot attach its artifact to a newly started session.
+
+The typed-part path now follows the same approved ordering as an upload. It
+retrieves and verifies the public PDF with no model call, exposes package choices,
+and completes official-resource recovery before the paid read. `/api/model` can
+then retrieve and re-verify that datasheet server-side when the browser has no
+uploaded file, so both SPICE-only and combined CAD+SPICE requests work from a
+part number. Air-gapped mode retains the upload-only boundary.
+
+Vendor KiCad footprints and Autodesk EAGLE/Fusion Electronics XML libraries
+enter neutral geometry rather than bypassing Forge's checks. The importer
+preserves multiple copper shapes for one terminal,
+rotations, rectangular/oval/round/rounded pads, plated and non-plated holes,
+slotted drills, paste/mask intent, rounded-corner ratios, and explicit Fab and
+courtyard bounds. The normal terminal, overlap, drill, paste, courtyard, and
+format gates run after import. EAGLE package selection requires an exact
+normalized identity in a multi-package library, and an exactly scoped EAGLE
+device connection table can independently confirm—or contradict—the extracted
+pinout. Design-rule-dependent elongated pads and arbitrary signal-layer copper
+are refused rather than assigned guessed geometry. KiCad writes all of those shapes; native Altium
+now preserves rectangular, rounded, oval, and slotted-hole geometry as well. An output
+format that cannot encode a feature exactly still refuses that format instead
+of flattening it.
+
+The official-LTspice CI job no longer depends on ignored local PDF caches and no
+longer runs vendor adapters alone. It builds self-contained evidence-shaped
+fixtures for all five generated emitters and every declared vendor adapter,
+then executes them in official LTspice. The Windows install verifies the
+downloaded MSI's Analog Devices signature and records a verbose install log on
+failure.
+
+The commercial extraction factory now treats Vertex and AI Studio as two
+independent transports for the same Gemini extraction contract. When both are
+configured, a typed provider/configuration/response failure on Vertex falls
+through to AI Studio inside the same job. Spend is metered at each actual door,
+the returned evidence records which door answered, and spend-policy or
+programming errors never trigger another billable attempt. Native-PDF recovery
+is advertised only when both possible receivers can consume it. This was added
+after the confirmation run observed both an OAuth timeout and an exhausted API
+balance: provider availability is infrastructure state, not a reason to ask the
+user to read a datasheet for Forge.
+
+Local release evidence on this tree:
+
+- 1,251/1,251 unit and integration tests pass with ngspice enabled.
+- TypeScript, ESLint, and the production Next.js build pass. The no-spend
+  production-browser smoke passes 11/11 required stages with zero browser
+  problems, including the real React GET/POST/state path for automatic official
+  artifact import and the interlock that holds a paid read until that recovery
+  finishes. The no-spend pass also inspects the outgoing multipart body and
+  proves that the recovered vendor file reaches `/api/model`; it separately
+  drives typed-part identification and the upload-free SPICE request. The
+  offline vendor-adapter browser recovery pass is green.
+- The 43-part frozen SPICE holdout has an 88% safe completion path, covers every
+  declared risk cell, and records 206 measurable passes, zero failures, and 85
+  explicitly unverifiable checks.
+- The refreshed 43-part blind CAD holdout reads 39/43 (91%), safely completes
+  35/43 (81%), and completes 31/43 (72%) with no user answer. All 86 model
+  answers replayed from the frozen cache and the release gate passed.
+- The independent KiCad reader opens all 76 emitted footprints and 76 symbol
+  libraries; the independent Altium reader opens all 144 native files. The
+  actual KiCad application is a separate CI acceptance gate below.
+- Every emitted-output corruption is rejected and all 20 selected CAD
+  implementation mutations are killed.
+- The full frozen SPICE negative control detects 73 injected numerical errors,
+  including the gain-resistance contract of both instrumentation amplifiers;
+  every generated behavior class can make the release instrument go red.
+
+The minimum paid SPICE corroboration panel completed on all 13 selected public
+documents. Across the nine resulting models, 65 measurable checks pass and zero
+fail; every declared risk cell received its independent reading. The final
+previously unavailable read completed on 2026-09-07 for $0.0329 because the
+other twelve were cached. A targeted fresh NCV8705 run then exercised the
+malformed-unit retry on the real damaged-font table: the LDO built with six
+measurable passes, zero failures, and no unscalable unit, for $0.0232.
+
+Two customer-tool proofs remain external to this local tree: the repaired
+official-LTspice Windows job and official-KiCad Linux job must run in CI after
+this change is committed and pushed. The local CAD release command now fails
+when `kicad-cli` is missing instead of reporting a false green. Neither CI job
+is represented as green until the actual tool runs.
+
+The preceding main-branch run was inspected through GitHub's job API. Its first
+test command remained live until GitHub's six-hour ceiling, and its LTspice MSI
+step failed before the simulator ran. This tree bounds every ngspice child to
+30 seconds and 2 MB of output, distinguishes timeout/rejection/missing-tool
+receipts, caps each CI test invocation at ten minutes, and caps all three jobs.
+The LTspice download/install path is the repaired path described above. These
+changes prevent another silent six-hour run, but the repaired jobs are still
+unproven until they execute on the committed tree.
+
+## Manufacturer STEP recovery closure, 2026-09-07
+
+Official STEP/STP package bodies are now a separate resource class rather than
+being grouped with copper CAD. Forge selects a unique archive member using the
+requested part and package identity, validates bounded ISO-10303-21 structure,
+and preserves the source instead of reverse-engineering or regenerating it.
+KiCad bundles reference the exact recovered file. Native Altium embeds that
+model and uses a cited body-height value for the component metadata Altium also
+requires; if that one value is unavailable, Forge asks for it rather than
+writing zero or inferring units and transforms from arbitrary STEP entities.
+
+The imported model remains usable when Forge cannot generate a body from
+datasheet dimensions. Missing body length or width does not create irrelevant
+questions for that case. The export route enforces its request limit against
+the bytes actually received even when `Content-Length` is absent or false.
+Focused route/import tests, the complete 1,251-test suite, TypeScript, ESLint,
+the production build, and the no-spend and authorized full production-browser
+passes are green. Official KiCad on Linux and official LTspice on Windows remain
+CI proofs that require this uncommitted tree to be committed and pushed first.

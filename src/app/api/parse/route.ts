@@ -20,6 +20,7 @@ import { makeExtractionModel, runExtraction } from "../../../lib/extraction";
 import { SpendLimitReached } from "../../../lib/spend";
 import { SecondPassFailedError } from "../../../lib/extraction/contracts";
 import {
+  DOCUMENT_READ_ROUTE_BUDGET_MS,
   ModelDeadlineError,
   modelBudgetMs,
   withDeadline,
@@ -57,11 +58,12 @@ export const runtime = "nodejs";
 // On that deadline `withDeadline` discards the WHOLE pass, including a pass 1
 // that had already succeeded and been paid for.
 //
-// 150 covers the p90 with the response margin and local work on top. It is NOT
+// 240 covers the current provider tail, a focused drawing pass, the response
+// margin and local work on top. It is NOT
 // a serverless platform's number: this is our own budget, enforced by our own
 // code, so it travels to whatever host we run on. A host that imposes something
 // shorter has to be told about it here.
-export const maxDuration = 150;
+export const maxDuration = 240;
 
 /**
  * The model pass gets a budget of its own, carved out of what is left of this
@@ -70,7 +72,7 @@ export const maxDuration = 150;
  * route's 30, and being killed by the platform costs the user a deterministic
  * record that had already succeeded.
  */
-const ROUTE_BUDGET_MS = maxDuration * 1000;
+const ROUTE_BUDGET_MS = DOCUMENT_READ_ROUTE_BUDGET_MS;
 
 /** A package designator is a short printed token; anything longer is not one. */
 const MAX_PACKAGE_HINT_LENGTH = 64;

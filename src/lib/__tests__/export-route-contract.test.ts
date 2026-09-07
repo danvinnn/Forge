@@ -121,6 +121,46 @@ function post(body: unknown): Request {
   });
 }
 
+function importedFootprint(pinCount = 8): string {
+  const half = pinCount / 2;
+  const pads = Array.from({ length: pinCount }, (_, index) => {
+    const left = index < half;
+    const row = left ? index : pinCount - 1 - index;
+    return `(pad "${index + 1}" smd rect (at ${left ? -3 : 3} ${row - (half - 1) / 2}) (size 1 0.6) (layers "F.Cu" "F.Paste" "F.Mask"))`;
+  });
+  return `(footprint "ACME1234-SOIC" ${pads.join(" ")})`;
+}
+
+function importedEagleFootprint(pinCount = 8, pinThreeName = "P3"): string {
+  const half = pinCount / 2;
+  const pads = Array.from({ length: pinCount }, (_, index) => {
+    const left = index < half;
+    const row = left ? index : pinCount - 1 - index;
+    return `<smd name="${index + 1}" x="${left ? -3 : 3}" y="${row - (half - 1) / 2}" dx="1" dy="0.6" layer="1"/>`;
+  });
+  const connections = pins(pinCount).map((pin) =>
+    `<connect gate="G$1" pin="${pin.number === "3" ? pinThreeName : pin.name}" pad="${pin.number}"/>`
+  );
+  return `<eagle version="9.6"><drawing><library><packages><package name="8-pin SOIC">${pads.join("")}</package></packages><devicesets><deviceset name="ACME1234"><devices><device name="" package="8-pin SOIC"><connects>${connections.join("")}</connects></device></devices></deviceset></devicesets></library></drawing></eagle>`;
+}
+
+function importedSymbol(name = "ACME1234", wrong = false): string {
+  const rows = pins(8).map((pin) =>
+    `(pin passive line (at 0 0 0) (length 2.54) (name "${wrong && pin.number === "3" ? "WRONG" : pin.name}") (number "${pin.number}"))`
+  );
+  return `(kicad_symbol_lib (symbol "${name}" ${rows.join(" ")}))`;
+}
+
+const importedStep = `ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('manufacturer body'),'2;1');
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+ENDSEC;
+END-ISO-10303-21;
+`;
+
 test("the file boundary requires the CAD assurance result", async () => {
   const response = await POST(
     post({ part: exportablePart("8-pin SOIC", 8), format: "kicad", assurance: undefined })
@@ -143,6 +183,118 @@ test("the file boundary preserves many review notes without refusing a buildable
   const zip = await JSZip.loadAsync(await response.arrayBuffer());
   const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
   assert.equal(manifest.releaseAssurance.review.length, 6);
+});
+
+test("an official vendor symbol contradiction refuses imported copper", async () => {
+  const response = await POST(post({
+    part: exportablePart("8-pin SOIC", 8),
+    format: "kicad",
+    importedCad: { fileName: "ACME1234.kicad_mod", source: importedFootprint(), pinEvidence: importedSymbol("ACME1234", true) }
+  }));
+  assert.equal(response.status, 422);
+  const payload = await response.json();
+  assert.equal(payload.code, "FOOTPRINT_INVALID", payload.error);
+  assert.match(payload.error, /pin names and numbering/i);
+});
+
+test("an unscopable optional symbol library does not discard valid imported copper", async () => {
+  const ambiguous = `(kicad_symbol_lib ${importedSymbol("OTHER1").replace(/^\(kicad_symbol_lib |\)$/g, "")} ${importedSymbol("OTHER2").replace(/^\(kicad_symbol_lib |\)$/g, "")})`;
+  const response = await POST(post({
+    part: exportablePart("8-pin SOIC", 8),
+    format: "kicad",
+    importedCad: { fileName: "ACME1234.kicad_mod", source: importedFootprint(), pinEvidence: ambiguous }
+  }));
+  assert.equal(response.status, 200, await response.text());
+});
+
+test("an official EAGLE footprint crosses the ordinary route and emits native Altium", async () => {
+  const response = await POST(post({
+    part: exportablePart("8-pin SOIC", 8),
+    format: "altium",
+    importedCad: { fileName: "ACME1234.lbr", source: importedEagleFootprint() }
+  }));
+  const body = await response.arrayBuffer();
+  assert.equal(response.status, 200, response.status === 200 ? undefined : Buffer.from(body).toString("utf8"));
+  const archive = await JSZip.loadAsync(body);
+  assert.ok(archive.file(/\.PcbLib$/).length === 1);
+  const manifest = JSON.parse(await archive.file("manifest.json")!.async("string"));
+  assert.match(manifest.footprint.source, /ACME1234\.lbr/);
+  assert.ok(manifest.releaseAssurance.findings.some((finding: { id: string; state: string }) => finding.id === "pinout" && finding.state === "confirmed"));
+});
+
+test("an official EAGLE device contradiction refuses imported copper", async () => {
+  const response = await POST(post({
+    part: exportablePart("8-pin SOIC", 8),
+    format: "kicad",
+    importedCad: { fileName: "ACME1234.lbr", source: importedEagleFootprint(8, "WRONG") }
+  }));
+  assert.equal(response.status, 422);
+  const payload = await response.json();
+  assert.equal(payload.code, "FOOTPRINT_INVALID", payload.error);
+  assert.match(payload.violations.join(" "), /EAGLE device/i);
+});
+
+test("a validated manufacturer STEP model replaces an unavailable generated body", async () => {
+  const part = exportablePart("8-pin SOIC", 8);
+  part.dimensions.bodyHeightMm = unknown();
+  const response = await POST(post({
+    part,
+    format: "kicad",
+    importedStep: { fileName: "ACME package.stp", source: importedStep }
+  }));
+  const body = await response.arrayBuffer();
+  assert.equal(response.status, 200, response.status === 200 ? undefined : Buffer.from(body).toString("utf8"));
+  const archive = await JSZip.loadAsync(body);
+  const stepEntry = archive.file(/\.step$/)[0];
+  assert.ok(stepEntry, `expected a STEP file in ${Object.keys(archive.files).join(", ")}`);
+  assert.equal(await stepEntry.async("string"), importedStep);
+  const footprint = await archive.file(/\.kicad_mod$/)[0].async("string");
+  assert.match(footprint, /\$\{KIPRJMOD\}\/acme1234\.step/);
+  const manifest = JSON.parse(await archive.file("manifest.json")!.async("string"));
+  assert.equal(manifest.stepSupported, true);
+  assert.match(manifest.stepNote, /manufacturer-authored ACME-package\.stp/i);
+  assert.equal(manifest.omitted, undefined);
+});
+
+test("a truncated manufacturer STEP model is refused at the file boundary", async () => {
+  const response = await POST(post({
+    part: exportablePart("8-pin SOIC", 8),
+    format: "kicad",
+    importedStep: { fileName: "ACME package.step", source: importedStep.replace("ENDSEC;\nEND-ISO-10303-21;", "END-ISO-10303-21;") }
+  }));
+  assert.equal(response.status, 422);
+  assert.match((await response.json()).error, /truncates a required Part 21 section/i);
+});
+
+test("Altium asks for missing installed height instead of writing zero beside a vendor STEP", async () => {
+  const part = exportablePart("8-pin SOIC", 8);
+  part.dimensions.bodyHeightMm = unknown();
+  const response = await POST(post({
+    part,
+    format: "altium",
+    importedStep: { fileName: "ACME package.step", source: importedStep }
+  }));
+  assert.equal(response.status, 422);
+  const payload = await response.json();
+  assert.equal(payload.code, "INPUT_REQUIRED");
+  assert.deepEqual(payload.needs.map((need: { field: string }) => need.field), ["bodyHeightMm"]);
+  assert.match(payload.error, /native Altium also requires the installed component height/i);
+});
+
+test("a supplied installed height lets Altium embed the exact vendor STEP", async () => {
+  const part = exportablePart("8-pin SOIC", 8);
+  part.dimensions.bodyHeightMm = unknown();
+  const response = await POST(post({
+    part,
+    format: "altium",
+    bodyHeightMm: 1.5,
+    importedStep: { fileName: "ACME package.step", source: importedStep }
+  }));
+  const body = await response.arrayBuffer();
+  assert.equal(response.status, 200, response.status === 200 ? undefined : Buffer.from(body).toString("utf8"));
+  const archive = await JSZip.loadAsync(body);
+  assert.ok(archive.file(/\.PcbLib$/).length === 1);
+  assert.equal(await archive.file(/\.step$/)[0].async("string"), importedStep);
 });
 
 test("a refusal the user can answer arrives as INPUT_REQUIRED with the field named", async () => {

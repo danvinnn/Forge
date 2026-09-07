@@ -59,6 +59,7 @@ import type { ExportFormat, PartRecord } from "../../lib/types";
 import type { FootprintGeometry } from "../../lib/geometry";
 import type { PackageChoice, RequiredInput } from "../../lib/exporters";
 import { cadElectricalTypeLimitations, cadPendingFindings } from "../../lib/cad-assurance";
+import { automaticOfficialImports, recognizedOfficialArtifact } from "../../lib/official-recovery";
 
 export type { Intent };
 
@@ -76,7 +77,7 @@ interface Identified {
    * what the person uploading the file called it, and the screen must not
    * present it as an identification.
    */
-  partNumberFrom: "file-name" | "document";
+  partNumberFrom: "file-name" | "document" | "user-input";
   manufacturer: string | null;
   pageCount: number;
   /** Designators named in the ordering table. Text only: no drawing behind them. */
@@ -85,12 +86,20 @@ interface Identified {
   outlinePage: number | null;
   sha256: string;
   fileName: string;
+  sourceUrl: string | null;
 }
 
 interface OfficialResource {
-  kind: "spice" | "cad" | "package-drawing" | "application-note";
+  kind: "spice" | "cad" | "step" | "package-drawing" | "application-note";
   label: string;
   url: string;
+}
+
+interface OfficialImportChoice {
+  kind: "cad" | "step" | "spice";
+  label: string;
+  files: Array<{ fileName: string; source: string }>;
+  pinEvidence: string | null;
 }
 
 const INTENTS: Array<{ key: Intent; label: string }> = [
@@ -253,6 +262,17 @@ function intentNote(intent: Intent): string {
   return "Both page sets, one pass. About 90 seconds.";
 }
 
+/** Keep evidence links inert unless they are an ordinary web URL. */
+function evidenceUrl(value: string | null | undefined): URL | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function SuiteWorkspace() {
   const [phase, setPhase] = useState<Phase>("empty");
   const [intent, setIntent] = useState<Intent>("cad");
@@ -314,7 +334,13 @@ export default function SuiteWorkspace() {
   const [spiceDirty, setSpiceDirty] = useState(false);
   const [vendorCad, setVendorCad] = useState<File | null>(null);
   const [vendorCadPinEvidence, setVendorCadPinEvidence] = useState<string | null>(null);
+  const [vendorStep, setVendorStep] = useState<File | null>(null);
   const [officialResources, setOfficialResources] = useState<OfficialResource[]>([]);
+  const [officialImportChoices, setOfficialImportChoices] = useState<OfficialImportChoice[]>([]);
+  const [discoveringOfficial, setDiscoveringOfficial] = useState(false);
+  const [importingOfficial, setImportingOfficial] = useState(false);
+  const attemptedOfficialImports = useRef(new Set<string>());
+  const officialResourceIdentity = useRef("");
 
   // Resource discovery is recovery work, so it runs without making the user
   // press another button. A failed vendor page is silent and never blocks the
@@ -324,13 +350,24 @@ export default function SuiteWorkspace() {
     const manufacturer = identified?.manufacturer || part?.manufacturer.value || "";
     if (!partNumber || !manufacturer) {
       setOfficialResources([]);
+      setDiscoveringOfficial(false);
       return;
     }
+    const identity = `${manufacturer}\u0000${partNumber}`;
+    if (officialResourceIdentity.current !== identity) {
+      officialResourceIdentity.current = identity;
+      attemptedOfficialImports.current.clear();
+      setOfficialResources([]);
+    }
     const controller = new AbortController();
+    setDiscoveringOfficial(true);
     void fetch(`/api/resources?partNumber=${encodeURIComponent(partNumber)}&manufacturer=${encodeURIComponent(manufacturer)}`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : { resources: [] })
       .then((payload) => setOfficialResources(Array.isArray(payload.resources) ? payload.resources : []))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (officialResourceIdentity.current === identity) setDiscoveringOfficial(false);
+      });
     return () => controller.abort();
   }, [identified?.partNumber, identified?.manufacturer, part?.partNumber.value, part?.manufacturer.value]);
 
@@ -420,6 +457,7 @@ export default function SuiteWorkspace() {
       const response = await fetch("/api/identify", { method: "POST", body });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not read this file.");
+      setDiscoveringOfficial(Boolean(payload.partNumber && payload.manufacturer));
       setIdentified(payload as Identified);
       // A datasheet can list several physical packages but cannot say which one
       // the user holds. Leave that choice explicit; preselecting the first
@@ -438,6 +476,42 @@ export default function SuiteWorkspace() {
     }
   }, []);
 
+  /**
+   * The same free deterministic identification for a typed part number.
+   * Retrieval is network work but not model work: it finds and verifies the
+   * public PDF, returns package choices, and lets official-artifact recovery
+   * finish before the user starts the paid read.
+   */
+  const identifyPrompt = useCallback(async () => {
+    const partNumber = prompt.trim();
+    if (!partNumber) return;
+    setBusy(true);
+    setStatus(`Finding ${partNumber}…`);
+    try {
+      const response = await fetch("/api/identify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ partNumber })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not identify this part.");
+      setDiscoveringOfficial(Boolean(payload.partNumber && payload.manufacturer));
+      setIdentified(payload as Identified);
+      setChosenPackage(null);
+      setPhase("identified");
+      setStatus("");
+    } catch (error) {
+      // Keep the typed part and the PDF-upload escape hatch. The full lookup
+      // remains available from this state in case a transient identification
+      // request, rather than the document itself, failed.
+      setIdentified(null);
+      setPhase("identified");
+      setStatus(error instanceof Error ? error.message : "Could not identify this part.");
+    } finally {
+      setBusy(false);
+    }
+  }, [prompt]);
+
   const onPick = useCallback(
     (chosen: File | null) => {
       if (!chosen) return;
@@ -447,11 +521,33 @@ export default function SuiteWorkspace() {
     [identify]
   );
 
-  const useOfficialResource = useCallback(async (resource: OfficialResource) => {
+  const selectOfficialFile = useCallback((kind: "cad" | "step" | "spice", candidate: { fileName: string; source: string }, pinEvidence: string | null = null) => {
+    const imported = new File([candidate.source], candidate.fileName, { type: "text/plain" });
+    if (kind === "cad") {
+      setVendorCad(imported);
+      setVendorCadPinEvidence(pinEvidence);
+      setStatus(`${imported.name} is ready; Forge will validate it when the CAD bundle is built.`);
+    } else if (kind === "step") {
+      setVendorStep(imported);
+      setStatus(`${imported.name} is ready; Forge will validate and preserve the manufacturer 3D model.`);
+    } else {
+      setVendorModel(imported);
+      setVendorCandidates([]);
+      setVendorCandidate("");
+      setVendorInstanceParameter(null);
+      setVendorInstanceValue("");
+      setSpiceDirty(true);
+      setStatus(`${imported.name} is ready to check as the vendor model.`);
+    }
+    setOfficialImportChoices((choices) => choices.filter((choice) => choice.kind !== kind));
+  }, []);
+
+  const useOfficialResource = useCallback(async (resource: OfficialResource, silentFailure = false): Promise<boolean> => {
     const manufacturer = identified?.manufacturer || part?.manufacturer.value || "";
-    if (!manufacturer) return;
-    setBusy(true);
-    setStatus(`Importing ${resource.label} from the manufacturer…`);
+    if (!manufacturer) return false;
+    const identityAtStart = officialResourceIdentity.current;
+    setImportingOfficial(true);
+    if (!silentFailure) setStatus(`Importing ${resource.label} from the manufacturer…`);
     try {
       const response = await fetch("/api/resources", {
         method: "POST",
@@ -459,32 +555,105 @@ export default function SuiteWorkspace() {
         body: JSON.stringify({ url: resource.url, manufacturer })
       });
       const payload = await response.json();
+      // A user can start another part while a manufacturer archive is in
+      // flight. Never attach the old part's copper/model to the new session.
+      if (officialResourceIdentity.current !== identityAtStart) return false;
       if (!response.ok) throw new Error(payload.error || "The official resource could not be imported.");
       const files = (Array.isArray(payload.files) ? payload.files : []) as Array<{ fileName: string; source: string }>;
-      const usable = resource.kind === "cad"
-        ? files.filter((candidate) => candidate.fileName.toLowerCase().endsWith(".kicad_mod"))
-        : files.filter((candidate) => /\.(?:lib|cir|sub|mod|txt)$/i.test(candidate.fileName));
-      if (usable.length !== 1) {
-        throw new Error(usable.length === 0
-          ? "That official resource has no format Forge can import yet."
-          : `That archive contains ${usable.length} possible files. Download it and choose the one for your ordering code.`);
+      const spiceFiles = files.filter((candidate) => /\.(?:lib|cir|sub|mod|ckt|sp|spi|inc|txt)$/i.test(candidate.fileName));
+      const cadFiles = files.filter((candidate) => /\.(?:kicad_mod|lbr)$/i.test(candidate.fileName));
+      const stepFiles = files.filter((candidate) => /\.(?:step|stp)$/i.test(candidate.fileName));
+      if (spiceFiles.length + cadFiles.length + stepFiles.length === 0) {
+        throw new Error("That official resource has no format Forge can import yet.");
       }
-      const imported = new File([usable[0].source], usable[0].fileName, { type: "text/plain" });
-      if (resource.kind === "cad") {
-        setVendorCad(imported);
-        setVendorCadPinEvidence(files.find((candidate) => candidate.fileName.toLowerCase().endsWith(".kicad_sym"))?.source ?? null);
-        setStatus(`${imported.name} is ready; Forge will validate it when the CAD bundle is built.`);
-      } else {
-        setVendorModel(imported);
-        setSpiceDirty(true);
-        setStatus(`${imported.name} is ready to check as the vendor model.`);
+      const symbols = files.filter((candidate) => candidate.fileName.toLowerCase().endsWith(".kicad_sym"));
+      const recognizedSymbol = recognizedOfficialArtifact(symbols, "cad", {
+        partNumber: identified?.partNumber || part?.partNumber.value
+      });
+      const pinEvidence = recognizedSymbol?.source ?? null;
+      const identity = {
+        partNumber: identified?.partNumber || part?.partNumber.value,
+        packageType: chosenPackage || part?.packageType.value
+      };
+      const groups: Array<{ kind: "cad" | "step" | "spice"; files: Array<{ fileName: string; source: string }> }> =
+        resource.kind === "spice"
+          ? [{ kind: "spice", files: spiceFiles }]
+          : [{ kind: "cad", files: cadFiles }, { kind: "step", files: stepFiles }];
+      const choices: OfficialImportChoice[] = [];
+      for (const group of groups) {
+        if (group.files.length === 0) continue;
+        const recognized = recognizedOfficialArtifact(group.files, group.kind, identity);
+        if (recognized) {
+          const imported = new File([recognized.source], recognized.fileName, { type: "text/plain" });
+          if (group.kind === "cad") {
+            setVendorCad(imported);
+            setVendorCadPinEvidence(pinEvidence);
+          } else if (group.kind === "step") {
+            setVendorStep(imported);
+          } else {
+            setVendorModel(imported);
+            setVendorCandidates([]);
+            setVendorCandidate("");
+            setVendorInstanceParameter(null);
+            setVendorInstanceValue("");
+            setSpiceDirty(true);
+          }
+        } else {
+          choices.push({ kind: group.kind, label: resource.label, files: group.files, pinEvidence });
+        }
       }
+      setOfficialImportChoices((current) => [
+        ...current.filter((choice) => !groups.some((group) => group.kind === choice.kind)),
+        ...choices
+      ]);
+      setStatus(choices.length > 0
+        ? `The manufacturer supplied several candidates. Choose the files named for your selected package or model.`
+        : "Forge imported the manufacturer artifacts and will validate them during the build.");
+      return true;
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "The official resource could not be imported.");
+      if (!silentFailure) setStatus(error instanceof Error ? error.message : "The official resource could not be imported.");
+      return false;
     } finally {
-      setBusy(false);
+      setImportingOfficial(false);
     }
-  }, [identified?.manufacturer, part?.manufacturer.value]);
+  }, [identified?.manufacturer, identified?.partNumber, part?.manufacturer.value, part?.partNumber.value, part?.packageType.value, chosenPackage, selectOfficialFile]);
+
+  const automaticImportsWaiting = useMemo(
+    () => automaticOfficialImports(
+      officialResources,
+      intent,
+      {
+        cad: vendorCad !== null || officialImportChoices.some((choice) => choice.kind === "cad"),
+        step: vendorStep !== null || officialImportChoices.some((choice) => choice.kind === "step"),
+        spice: vendorModel !== null || officialImportChoices.some((choice) => choice.kind === "spice")
+      },
+      attemptedOfficialImports.current
+    ),
+    [officialResources, intent, vendorCad, vendorStep, vendorModel, officialImportChoices, importingOfficial]
+  );
+
+  // DISCOVERY WITHOUT AUTOMATIC IMPORT WAS STILL A USER TASK. Once the
+  // manufacturer has supplied a ranked direct artifact, Forge tries it inside
+  // the same job. Failed candidates stay invisible and the next official URL
+  // is attempted; archives with several usable files stop at the existing
+  // recognition-based chooser because choosing a package/model is user-owned.
+  useEffect(() => {
+    if (officialResources.length === 0 || importingOfficial) return;
+    const queue = automaticImportsWaiting;
+    if (queue.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const completed = new Set<"cad" | "step" | "spice">();
+      for (const resource of queue) {
+        if (cancelled) break;
+        if (resource.kind !== "cad" && resource.kind !== "step" && resource.kind !== "spice") continue;
+        if (completed.has(resource.kind)) continue;
+        attemptedOfficialImports.current.add(resource.url);
+        if (await useOfficialResource(resource, true)) completed.add(resource.kind);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [officialResources, importingOfficial, automaticImportsWaiting, useOfficialResource]);
 
   /**
    * THE READ. Ninety seconds and one model call, begun on purpose.
@@ -514,8 +683,7 @@ export default function SuiteWorkspace() {
       // on a package, so a footprint problem blocked a model that does not have
       // a footprint. Found by `bench:browser --spice`.
       if (intent === "spice") {
-        if (!file) throw new Error("Choose a datasheet to build a model from.");
-        const body = modelRequest(identified?.partNumber || file.name, spiceAnswers);
+        const body = modelRequest(identified?.partNumber || file?.name || prompt.trim(), spiceAnswers);
         const response = await fetch("/api/model", { method: "POST", body });
         const payload = (await response.json()) as Record<string, unknown>;
         if (!response.ok) {
@@ -608,7 +776,27 @@ export default function SuiteWorkspace() {
       window.clearInterval(tick);
       setBusy(false);
     }
-  }, [file, prompt, intent, needsPackage, chosenPackage, settings]);
+  // `modelRequest` is declared later in the component and closes over the
+  // vendor artifact and its configuration. List those inputs here explicitly:
+  // after automatic recovery attaches a model, this callback must be recreated
+  // or the paid read would run with the pre-recovery FormData it captured.
+  }, [
+    file,
+    prompt,
+    intent,
+    needsPackage,
+    chosenPackage,
+    settings,
+    identified?.partNumber,
+    identified?.manufacturer,
+    vendorModel,
+    vendorCandidate,
+    vendorInstanceValue,
+    spiceCorrections,
+    spiceReviewDeviceClass,
+    spiceBlockChoice,
+    spiceAnswers
+  ]);
 
   /**
    * TAKE THE BUNDLE. This button had no `onClick` at all.
@@ -778,6 +966,7 @@ export default function SuiteWorkspace() {
           ...(vendorCad
             ? { importedCad: { fileName: vendorCad.name, source: await vendorCad.text(), ...(vendorCadPinEvidence ? { pinEvidence: vendorCadPinEvidence } : {}) } }
             : {}),
+          ...(vendorStep ? { importedStep: { fileName: vendorStep.name, source: await vendorStep.text() } } : {}),
           // The package the user is HOLDING. This is what makes `/api/export`
           // apply `asPackage`, which is the only place the relabelling rule is.
           ...(needsPackage && chosenPackage ? { packageType: chosenPackage } : {}),
@@ -880,7 +1069,7 @@ export default function SuiteWorkspace() {
     } finally {
       setBusy(false);
     }
-  }, [part, format, needsPackage, chosenPackage, settings, supplied, review, toCheck, packageChoice, vendorCad, vendorCadPinEvidence]);
+  }, [part, format, needsPackage, chosenPackage, settings, supplied, review, toCheck, packageChoice, vendorCad, vendorCadPinEvidence, vendorStep]);
 
   /**
    * Answers one outstanding question and retries the export immediately.
@@ -957,7 +1146,13 @@ export default function SuiteWorkspace() {
     setSpiceDirty(false);
     setVendorCad(null);
     setVendorCadPinEvidence(null);
+    setVendorStep(null);
     setOfficialResources([]);
+    setOfficialImportChoices([]);
+    setDiscoveringOfficial(false);
+    setImportingOfficial(false);
+    attemptedOfficialImports.current.clear();
+    officialResourceIdentity.current = "";
     setReview([]);
     setChecks([]);
     setPageImages([]);
@@ -1231,7 +1426,7 @@ export default function SuiteWorkspace() {
                 placeholder="LMP7704-SP"
                 onChange={(event) => setPrompt(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && prompt.trim()) void runRead();
+                  if (event.key === "Enter" && prompt.trim()) void identifyPrompt();
                 }}
               />
             ) : (
@@ -1286,7 +1481,7 @@ export default function SuiteWorkspace() {
                     type="button"
                     className="btn btn-primary"
                     disabled={busy || !prompt.trim()}
-                    onClick={() => void runRead()}
+                    onClick={() => void identifyPrompt()}
                   >
                     {intent === "cad" ? "Read for CAD" : intent === "spice" ? "Read for SPICE" : "Read for both"}
                   </button>
@@ -1334,7 +1529,7 @@ export default function SuiteWorkspace() {
                 <button
                   type="button"
                   className="btn btn-primary btn-lg"
-                  disabled={busy || (needsPackage && (identified?.packages.length ?? 0) > 0 && !chosenPackage)}
+                  disabled={busy || discoveringOfficial || importingOfficial || automaticImportsWaiting.length > 0 || (needsPackage && (identified?.packages.length ?? 0) > 0 && !chosenPackage)}
                   onClick={() => void runRead()}
                 >
                   {/* The CAD label gets MORE specific once a package is
@@ -1342,7 +1537,9 @@ export default function SuiteWorkspace() {
                       file was chosen became "Read for the model" after it. */}
                   {needsPackage ? (chosenPackage ? `Read for ${chosenPackage}` : "Read this datasheet") : "Read for the SPICE model"}
                 </button>
-                <span className="frame-note">{intentNote(intent)}</span>
+                <span className="frame-note">
+                  {discoveringOfficial || importingOfficial ? "Checking official manufacturer artifacts before the read…" : intentNote(intent)}
+                </span>
               </div>
             </div>
           )}
@@ -1419,7 +1616,7 @@ export default function SuiteWorkspace() {
                   verdict={verdict}
                   previewGeometry={geometry}
                   activePackage={activePackage}
-                  sourceUrl={null}
+                  sourceUrl={evidenceUrl(part.sourceUrl ?? identified?.sourceUrl)}
                   checks={checks}
                   failedChecks={checks.filter((check) => check.state === "fail")}
                   openChecks={checks.filter((check) => check.state !== "pass")}
@@ -1443,27 +1640,80 @@ export default function SuiteWorkspace() {
                         id="vendor-cad-file"
                         className="visually-hidden"
                         type="file"
-                        accept=".kicad_mod"
+                        accept=".kicad_mod,.lbr"
                         onChange={(event) => {
                           const chosen = event.target.files?.[0] ?? null;
                           setVendorCad(chosen);
                           setVendorCadPinEvidence(null);
+                          setOfficialImportChoices((choices) => choices.filter((choice) => choice.kind !== "cad"));
                           setStatus(chosen ? `${chosen.name} will replace generated copper after Forge validates its pins and geometry.` : "");
                         }}
                       />
                       <span className="vendor-file">{vendorCad?.name ?? "No vendor footprint selected"}</span>
                     </div>
                     <p className="frame-note">Optional. Forge imports vendor copper into its neutral geometry, checks it against this part, and emits it in your selected format.</p>
-                    {officialResources.some((resource) => resource.kind === "cad" || resource.kind === "package-drawing") && (
+                    <div className="vendor-model-controls cad-import-controls">
+                      <label className="btn" htmlFor="vendor-step-file">Use vendor 3D model</label>
+                      <input
+                        id="vendor-step-file"
+                        className="visually-hidden"
+                        type="file"
+                        accept=".step,.stp"
+                        onChange={(event) => {
+                          const chosen = event.target.files?.[0] ?? null;
+                          setVendorStep(chosen);
+                          setOfficialImportChoices((choices) => choices.filter((choice) => choice.kind !== "step"));
+                          setStatus(chosen ? `${chosen.name} will replace the generated 3D body after Forge validates the STEP file.` : "");
+                        }}
+                      />
+                      <span className="vendor-file">{vendorStep?.name ?? "No vendor 3D model selected"}</span>
+                    </div>
+                    <p className="frame-note">Optional. Forge preserves a complete manufacturer STEP model and links or embeds it in the selected CAD format.</p>
+                    {officialResources.some((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "package-drawing") && (
                       <ul className="resource-links" aria-label="Official CAD resources found automatically">
-                        {officialResources.filter((resource) => resource.kind === "cad" || resource.kind === "package-drawing").map((resource) => (
+                        {officialResources.filter((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "package-drawing").map((resource) => (
                           <li key={resource.url}>
                             <a href={resource.url} target="_blank" rel="noreferrer">{resource.label}</a>
-                            {resource.kind === "cad" && <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void useOfficialResource(resource)}>Import</button>}
+                            {(resource.kind === "cad" || resource.kind === "step") && <button type="button" className="btn btn-quiet" disabled={busy || importingOfficial} onClick={() => void useOfficialResource(resource)}>Import</button>}
                           </li>
                         ))}
                       </ul>
                     )}
+                    {officialImportChoices.find((choice) => choice.kind === "cad") && (() => {
+                      const officialImportChoice = officialImportChoices.find((choice) => choice.kind === "cad")!;
+                      return (
+                      <div className="resource-choice" role="group" aria-labelledby="cad-resource-choice-heading">
+                        <p id="cad-resource-choice-heading">
+                          <strong>Choose the manufacturer footprint for your selected package.</strong>{" "}
+                          Forge found these inside {officialImportChoice.label}; it will validate the selected copper before export.
+                        </p>
+                        <ul className="resource-links">
+                          {officialImportChoice.files.map((candidate) => (
+                            <li key={candidate.fileName}>
+                              <span className="vendor-file" title={candidate.fileName}>{candidate.fileName}</span>
+                              <button type="button" className="btn btn-quiet" onClick={() => selectOfficialFile("cad", candidate, officialImportChoice.pinEvidence)}>Use this footprint</button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      );
+                    })()}
+                    {officialImportChoices.find((choice) => choice.kind === "step") && (() => {
+                      const officialImportChoice = officialImportChoices.find((choice) => choice.kind === "step")!;
+                      return (
+                        <div className="resource-choice" role="group" aria-labelledby="step-resource-choice-heading">
+                          <p id="step-resource-choice-heading"><strong>Choose the manufacturer 3D model for your selected package.</strong></p>
+                          <ul className="resource-links">
+                            {officialImportChoice.files.map((candidate) => (
+                              <li key={candidate.fileName}>
+                                <span className="vendor-file" title={candidate.fileName}>{candidate.fileName}</span>
+                                <button type="button" className="btn btn-quiet" onClick={() => selectOfficialFile("step", candidate)}>Use this 3D model</button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
                 {showSpice && (
@@ -1605,7 +1855,7 @@ export default function SuiteWorkspace() {
                               id="vendor-spice-file"
                               className="visually-hidden"
                               type="file"
-                              accept=".lib,.cir,.sub,.mod,.txt,text/plain"
+                              accept=".lib,.cir,.sub,.mod,.ckt,.sp,.spi,.inc,.txt,text/plain"
                               onChange={(event) => {
                                 const chosen = event.target.files?.[0] ?? null;
                                 setVendorModel(chosen);
@@ -1662,11 +1912,30 @@ export default function SuiteWorkspace() {
                               {officialResources.filter((resource) => resource.kind === "spice").map((resource) => (
                                 <li key={resource.url}>
                                   <a href={resource.url} target="_blank" rel="noreferrer">{resource.label}</a>
-                                  <button type="button" className="btn btn-quiet" disabled={busy} onClick={() => void useOfficialResource(resource)}>Import</button>
+                                  <button type="button" className="btn btn-quiet" disabled={busy || importingOfficial} onClick={() => void useOfficialResource(resource)}>Import</button>
                                 </li>
                               ))}
                             </ul>
                           )}
+                          {officialImportChoices.find((choice) => choice.kind === "spice") && (() => {
+                            const officialImportChoice = officialImportChoices.find((choice) => choice.kind === "spice")!;
+                            return (
+                            <div className="resource-choice" role="group" aria-labelledby="spice-resource-choice-heading">
+                              <p id="spice-resource-choice-heading">
+                                <strong>Choose the manufacturer model for this device.</strong>{" "}
+                                Forge will inspect its declarations next; helper subcircuits remain a separate choice.
+                              </p>
+                              <ul className="resource-links">
+                                {officialImportChoice.files.map((candidate) => (
+                                  <li key={candidate.fileName}>
+                                    <span className="vendor-file" title={candidate.fileName}>{candidate.fileName}</span>
+                                    <button type="button" className="btn btn-quiet" onClick={() => selectOfficialFile("spice", candidate)}>Use this model</button>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                            );
+                          })()}
                           {spice.vendorVerification.status !== "not-supplied" && (
                             <div className={`vendor-result vendor-result-${spice.vendorVerification.status}`} role="status">
                               {spice.vendorVerification.status === "refused" ? (
@@ -2099,7 +2368,7 @@ export default function SuiteWorkspace() {
                           id="vendor-spice-refusal-file"
                           className="visually-hidden"
                           type="file"
-                          accept=".lib,.cir,.sub,.mod,.txt,text/plain"
+                          accept=".lib,.cir,.sub,.mod,.ckt,.sp,.spi,.inc,.txt,text/plain"
                           onChange={(event) => {
                             const chosen = event.target.files?.[0] ?? null;
                             setVendorModel(chosen);

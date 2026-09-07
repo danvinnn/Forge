@@ -18,12 +18,21 @@
 import type { DeploymentMode } from "./deployment";
 import type { DatasheetResolver } from "./resolver";
 
+let resolverOverride: DatasheetResolver | null | undefined;
+
+/** Test seam for route-level lookup contracts. Air-gapped mode still wins. */
+export function __setResolverOverride(resolver?: DatasheetResolver | null): void {
+  resolverOverride = resolver;
+}
+
 export async function makeResolver(mode: DeploymentMode): Promise<DatasheetResolver | null> {
   if (mode !== "commercial") {
     // Air-gapped (or any non-commercial mode): no resolver exists, and the network
     // subtree below is never imported.
     return null;
   }
+
+  if (resolverOverride !== undefined) return resolverOverride;
 
   const { buildCommercialResolver } = await import("./resolvers/commercial");
   return buildCommercialResolver();

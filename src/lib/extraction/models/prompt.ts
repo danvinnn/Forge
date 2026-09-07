@@ -477,6 +477,12 @@ export function buildPrompt(request: ExtractionRequest): string {
     .join("\n\n");
   const partNumber = request.partNumber ? sanitizePartNumber(request.partNumber) : "";
   const images = imageGuidance(request.images.map((image) => image.page));
+  const nativeDocument = request.sourceDocument ? `
+The original PDF is attached after this prompt. Inspect it directly, including its page images,
+tables, diagrams and scans. The page-scoped text below is a coordinate-preserving aid, not the
+only evidence. This is the automatic recovery path for missing, damaged or image-only text layers.
+Use the PDF's printed page content, and still cite the 1-indexed PDF page where each value appears.
+` : "";
   // Sanitised the same way the part number is: it reaches here from a request
   // body on the package-chooser path, so it is untrusted input too.
   const packageType = request.packageType ? sanitizeDesignator(request.packageType) : "";
@@ -510,11 +516,17 @@ export function buildPrompt(request: ExtractionRequest): string {
   const candidates = (request.packageCandidates ?? [])
     .map((designator) => sanitizeDesignator(designator))
     .filter((designator) => designator.length > 0);
-  // Asked only on the first pass, when there is nothing attached yet.
-  const askPages = request.images.length === 0 ? pageRequestGuidance(request.fields) : "";
-  // Asked on the pass that can SEE the drawings, and only where the package is
-  // genuinely unsettled. See `perPackageDimensionGuidance`.
-  const perPackage = request.images.length > 0 && !packageType ? perPackageDimensionGuidance() : "";
+  // A native PDF is already the visual pass. Asking it which pages should be
+  // rendered and then sending those same pages in a second request doubled the
+  // model work, latency and failure surface while adding no evidence. The
+  // focused render remains the recovery path for models that cannot inspect a
+  // PDF natively (and for PDFs too large for the inline transport envelope).
+  const hasVisualEvidence = request.images.length > 0 || request.sourceDocument !== undefined;
+  const askPages = hasVisualEvidence ? "" : pageRequestGuidance(request.fields);
+  // Per-package dimensions need a visual source, not specifically a PNG. Keep
+  // the same contract whether that source is the original PDF or focused page
+  // renders so native inspection does not lose the package chooser's data.
+  const perPackage = hasVisualEvidence && !packageType ? perPackageDimensionGuidance() : "";
 
   const contract = `Respond with JSON only, no markdown fences and no commentary, in exactly this shape:
 {"values": {"<field>": {"value": <value or null>, "page": <page number or null>}}, "notes": ["<observation>"]${
@@ -530,7 +542,7 @@ export function buildPrompt(request: ExtractionRequest): string {
 Extract ONLY these fields:
 ${wanted}
 
-Rules:
+Rules:${nativeDocument}
 - If a field is not stated in the document, return null for it. Do NOT guess, infer, or estimate.
 - For every field you DO answer, report the page number you read it from.
 - The page number must be a page where the value literally appears. Answers whose page cannot be confirmed are discarded.

@@ -14,10 +14,10 @@ export type { DatasheetRef, DatasheetResolver, ResolveOptions } from "./resolver
 
 export { ingestUpload, UploadValidationError } from "./upload";
 export { MAX_PDF_BYTES, MIN_PDF_BYTES, PdfValidationError } from "./pdf";
-export { sanitizeFileName } from "./filename";
+export { sanitizeFileName, sanitizeArtifactFileName } from "./filename";
 export type { UploadInput } from "./upload";
 
-export { makeResolver } from "./factory";
+export { makeResolver, __setResolverOverride } from "./factory";
 
 export { RateLimiter, InMemoryRateLimitStore, clientKey, lookupLimiter, uploadLimiter, activeLookupLimiter, activeUploadLimiter, __setLimiterOverrides } from "./ratelimit";
 export type { RateLimitResult, RateLimitStore, RateLimiterOptions } from "./ratelimit";

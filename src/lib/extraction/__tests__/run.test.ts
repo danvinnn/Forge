@@ -27,12 +27,13 @@ const doc = datasheetTextFromPages([
 ]);
 
 /** Records every request it is given, and answers from a script. */
-function stub(answers: ExtractionResult[]): ExtractionModel & { seen: ExtractionRequest[] } {
+function stub(answers: ExtractionResult[], supportsNativePdf = false): ExtractionModel & { seen: ExtractionRequest[] } {
   const seen: ExtractionRequest[] = [];
   let call = 0;
   return {
     seen,
     name: "stub",
+    supportsNativePdf,
     isConfigured: () => true,
     extract: async (request: ExtractionRequest) => {
       seen.push(request);
@@ -66,6 +67,41 @@ test("pass one sends the whole document as text, and no images", async () => {
   assert.equal(model.seen.length, 1, "no second pass when no pages are asked for");
   assert.equal(model.seen[0].images.length, 0, "the first pass is text only");
   assert.equal(model.seen[0].pages.length, doc.pages.length, "every page goes");
+  assert.equal(model.seen[0].sourceDocument, undefined, "a local-style model is not told a PDF was attached");
+});
+
+test("a native-document model receives the original PDF on the first pass", async () => {
+  const part = buildPartRecord(doc, "ACME555.pdf");
+  const model = stub([{ values: {} }], true);
+
+  await runExtraction(part, doc, NOT_A_PDF, model, "ACME555.pdf");
+
+  assert.deepEqual(model.seen[0].sourceDocument, {
+    mimeType: "application/pdf",
+    base64: Buffer.from(NOT_A_PDF).toString("base64")
+  });
+  assert.equal(model.seen.length, 1, "native inspection is the visual pass; no duplicate render call is made");
+});
+
+test("an accepted large PDF stays on text and focused renders instead of overflowing the inline request", async () => {
+  const part = buildPartRecord(doc, "ACME555.pdf");
+  const model = stub([{ values: {} }], true);
+  const large = new ArrayBuffer(14 * 1024 * 1024 + 1);
+
+  await runExtraction(part, doc, large, model, "ACME555.pdf");
+
+  assert.equal(model.seen[0].sourceDocument, undefined);
+  assert.equal(model.seen[0].pages.length, doc.pages.length);
+});
+
+test("a healthy text layer keeps native-capable models on focused-page recovery", async () => {
+  const dense = datasheetTextFromPages([`ACME555 datasheet ${"ordinary searchable text ".repeat(40)}`]);
+  const part = buildPartRecord(dense, "ACME555.pdf");
+  const model = stub([{ values: {} }], true);
+
+  await runExtraction(part, dense, NOT_A_PDF, model, "ACME555.pdf");
+
+  assert.equal(model.seen[0].sourceDocument, undefined, "a healthy text PDF is not sent through whole-document vision");
 });
 
 test("a page the model asks for triggers a second pass", async () => {
@@ -162,39 +198,21 @@ test("on a REAL pdf the second pass happens, and carries the pages the model ask
   assert.equal(outcome.lookedAtPages, true);
 });
 
-test("the second pass does not resend the document it already read", async () => {
-  // Cost, measured: the whole-document prompt is ~16k tokens on a median
-  // datasheet, and pass two was carrying all of it a second time to ask about
-  // one drawing. That doubled the input cost of every part with a second pass
-  // and bought nothing, because the model had already read it.
-  const { readFileSync } = await import("node:fs");
-  const { fileURLToPath } = await import("node:url");
-  const { extractDatasheetText } = await import("../../pdftext");
+test("a native PDF replaces the focused second pass instead of duplicating it", async () => {
+  // The provider has already inspected the original page images. A second call
+  // over rendered copies adds no independent evidence and used to turn an
+  // otherwise successful read into a total failure when that call timed out.
+  const sparse = datasheetTextFromPages(["PACKAGE OUTLINE"]);
+  const part = buildPartRecord(sparse, "ACME555.pdf");
 
-  const path = fileURLToPath(new URL("../../../../test-data/LMP7704-SP.pdf", import.meta.url));
-  const bytes = readFileSync(path);
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  const real = await extractDatasheetText(buffer);
-  const part = buildPartRecord(real, "LMP7704-SP.pdf");
-  const outline = real.pages.find((page) => /PACKAGE OUTLINE/.test(page.text))!;
+  // Even if a provider returns the legacy page-request field, orchestration
+  // ignores it when the request carried the native document.
+  const model = stub([{ values: {}, pagesWorthRendering: [1] }], true);
+  await runExtraction(part, sparse, NOT_A_PDF, model, "ACME555.pdf");
 
-  const model = stub([{ values: {}, pagesWorthRendering: [outline.page] }, { values: {} }]);
-  await runExtraction(part, real, buffer, model, "LMP7704-SP.pdf");
-
-  assert.equal(model.seen.length, 2);
-  assert.equal(model.seen[0].pages.length, real.pages.length, "pass one is the whole document");
-  assert.ok(
-    model.seen[1].pages.map((page) => page.page).includes(outline.page),
-    "pass two carries the page it is looking at"
-  );
-  assert.ok(
-    model.seen[1].pages.length < real.pages.length,
-    "pass two carries only the pages being looked at, never the document again"
-  );
-  assert.ok(
-    model.seen[1].pages.length < model.seen[0].pages.length / 5,
-    "and is a small fraction of the first"
-  );
+  assert.equal(model.seen.length, 1);
+  assert.equal(model.seen[0].pages.length, sparse.pages.length, "pass one is the whole document");
+  assert.ok(model.seen[0].sourceDocument, "the first pass receives the native PDF");
 });
 
 test("a rendered figure does not overwrite a pin list the first pass already read", async () => {

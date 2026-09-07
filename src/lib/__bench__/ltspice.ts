@@ -8,14 +8,34 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildModel } from "../spice/build";
 import { inspectVendorModel, VENDOR_PRIMITIVE_TERMINALS, wrapVendorCandidate } from "../spice/vendor";
+import { readBlocks } from "../spice/model";
+import { emitSubckt } from "../spice/emit";
+import { emitComparatorSubckt } from "../spice/comparator";
+import { emitReferenceSubckt } from "../spice/reference";
+import { emitLdoSubckt } from "../spice/ldo";
+import { emitInstrumentationSubckt } from "../spice/instrumentation";
+import type { SpecRow } from "../spice/specs";
+
+function row(key: string, typ: number, unit: string, conditions: string | null = null): SpecRow {
+  return { parameter: key, key, symbol: null, conditions, unit, values: { min: null, typ, max: null }, group: null, scope: null, page: 1 };
+}
+
+// Evidence-shaped fixtures keep this official-simulator gate self-contained.
+// The numerical holdout proves extraction and conformance; this proves every
+// emitter's actual syntax without relying on ignored local PDF caches.
+const amplifier = readBlocks([row("openLoopGain", 120, "dB"), row("gbw", 1, "MHz"), row("offsetVoltage", 10, "uV")])[0];
+const comparator = readBlocks([row("propagationDelay", 1, "us"), row("outputLowVoltage", 0.2, "V"), row("outputSinkCurrent", 5, "mA")])[0];
+const reference = readBlocks([row("outputVoltage", 2.5, "V"), row("lineRegulation", 1, "ppm/V"), row("supplyVoltage", 3.3, "V")])[0];
+const ldo = readBlocks([row("outputVoltage", 5, "V"), row("dropoutVoltage", 1, "V"), row("lineRegulationOverRange", 5, "mV", "VI = 7 to 12 V")])[0];
+const instrumentation = readBlocks([row("gainResistance", 100, "kOhm"), row("offsetVoltage", 25, "uV")])[0];
 
 const CASES = [
-  { part: "OPA333", klass: "opamp", circuit: ["VCC VCC 0 5", "VEE VEE 0 0", "VINP INP 0 2.6", "VINN INN 0 2.5", "XU INP INN OUT VCC VEE OPA333", "RLOAD OUT 0 10k"] },
-  { part: "LM139AQML-SP", klass: "comparator", circuit: ["VCC VCC 0 5", "VEE VEE 0 0", "VINP INP 0 2.6", "VINN INN 0 2.5", "XU INP INN OUT VCC VEE LM139AQML_SP", "RLOAD VCC OUT 10k"] },
-  { part: "REF5025", klass: "reference", circuit: ["VIN IN 0 5", "XU IN OUT 0 REF5025", "RLOAD OUT 0 10k"] },
-  { part: "L7805", klass: "ldo", circuit: ["VIN IN 0 12", "XU IN OUT 0 L7805", "RLOAD OUT 0 1k"] }
+  { part: "OPAMP_TEST", subckt: emitSubckt(amplifier, { partNumber: "OPAMP_TEST" }), circuit: ["VCC VCC 0 5", "VEE VEE 0 0", "VINP INP 0 2.6", "VINN INN 0 2.5", "XU INP INN OUT VCC VEE OPAMP_TEST", "RLOAD OUT 0 10k"] },
+  { part: "COMPARATOR_TEST", subckt: emitComparatorSubckt(comparator, { partNumber: "COMPARATOR_TEST" }), circuit: ["VCC VCC 0 5", "VEE VEE 0 0", "VINP INP 0 2.6", "VINN INN 0 2.5", "XU INP INN OUT VCC VEE COMPARATOR_TEST", "RLOAD VCC OUT 10k"] },
+  { part: "REFERENCE_TEST", subckt: emitReferenceSubckt(reference, { partNumber: "REFERENCE_TEST" }), circuit: ["VIN IN 0 5", "XU IN OUT 0 REFERENCE_TEST", "RLOAD OUT 0 10k"] },
+  { part: "LDO_TEST", subckt: emitLdoSubckt(ldo, { partNumber: "LDO_TEST" }), circuit: ["VIN IN 0 12", "XU IN OUT 0 LDO_TEST", "RLOAD OUT 0 1k"] },
+  { part: "INA_TEST", subckt: emitInstrumentationSubckt(instrumentation, { partNumber: "INA_TEST" }), circuit: ["VCC VCC 0 5", "VEE VEE 0 -5", "VINP INP 0 0.1", "VINN INN 0 0", "RG RGP RGN 100k", "XU INP INN OUT 0 VCC VEE RGP RGN INA_TEST", "RLOAD OUT 0 10k"] }
 ] as const;
 
 /** One minimal, official-LTspice model card for every adapter contract. */
@@ -53,20 +73,9 @@ async function main(): Promise<void> {
   const failures: string[] = [];
   try {
     for (const one of vendorOnly ? [] : CASES) {
-      const pdfPath = path.join(process.cwd(), ".bench-cache", `${one.part}.pdf`);
-      if (!fs.existsSync(pdfPath)) {
-        failures.push(`${one.part}: cached datasheet is absent`);
-        continue;
-      }
-      const pdf = fs.readFileSync(pdfPath);
-      const result = await buildModel(pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer, one.part);
-      if (!result.subckt || result.deviceClass?.id !== one.klass) {
-        failures.push(`${one.part}: no ${one.klass} model was built`);
-        continue;
-      }
       const folder = path.join(root, one.part.replace(/[^A-Za-z0-9._-]/g, "_"));
       fs.mkdirSync(folder);
-      fs.writeFileSync(path.join(folder, "model.lib"), result.subckt);
+      fs.writeFileSync(path.join(folder, "model.lib"), one.subckt);
       fs.writeFileSync(path.join(folder, "case.net"), [
         `* Forge LTspice acceptance: ${one.part}`,
         ".include model.lib",

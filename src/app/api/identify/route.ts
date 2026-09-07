@@ -13,10 +13,12 @@
  *
  * ## Free, and it must stay free
  *
- * No model call, no network, no spend. It is the deterministic text pass
- * `/api/parse` already runs before the model leg, returned on its own. The
- * moment this needs a model it belongs behind the Read button with everything
- * else that costs money, and `SuiteWorkspace` says so in the same words.
+ * No model call and no model spend. For an upload it is entirely local. For a
+ * typed part number it performs the same public-datasheet retrieval as lookup,
+ * verifies that document names the requested part, and then runs the same
+ * deterministic text pass `/api/parse` uses before the model leg. The moment
+ * identification needs a model it belongs behind the Read button with
+ * everything else that costs money.
  *
  * ## THE PART NUMBER IS THE FILE NAME, and this says so
  *
@@ -38,9 +40,16 @@
 
 import { NextResponse } from "next/server";
 import { extractPartRecord } from "../../../lib/datasheet";
-import { PdfExtractionError, PdfUnreadableError } from "../../../lib/pdftext";
+import { looksLikeWrongDocument, namesThePart, PdfExtractionError, PdfUnreadableError } from "../../../lib/pdftext";
 import { sha256Hex } from "../../../lib/retrieval/hash";
-import { getDeploymentMode, clientKey, activeUploadLimiter, MAX_PDF_BYTES } from "../../../lib/retrieval";
+import {
+  getDeploymentMode,
+  makeResolver,
+  clientKey,
+  activeLookupLimiter,
+  activeUploadLimiter,
+  MAX_PDF_BYTES
+} from "../../../lib/retrieval";
 
 /**
  * Declared rather than inherited. This pass is deterministic and fast, but a
@@ -53,8 +62,45 @@ function fail(error: string, code: string, status: number) {
   return NextResponse.json({ error, code, mode: getDeploymentMode() }, { status });
 }
 
+async function identifyBytes(
+  fileName: string,
+  bytes: ArrayBuffer,
+  options: { pdfUrl?: string; requestedPart?: string } = {}
+) {
+  const { doc, part } = await extractPartRecord(fileName, bytes, options.pdfUrl);
+  if (options.requestedPart && (looksLikeWrongDocument(doc) || !namesThePart(doc, options.requestedPart))) {
+    return fail(
+      `The retrieved document could not be verified as the datasheet for ${options.requestedPart}. Upload the correct PDF directly.`,
+      "WRONG_DOCUMENT",
+      422
+    );
+  }
+  const partNumber = options.requestedPart ?? part.partNumber.value ?? "";
+
+  return NextResponse.json({
+    partNumber,
+    partNumberFrom: options.requestedPart
+      ? "user-input"
+      : part.partNumber.method === "user" ? "file-name" : "document",
+    manufacturer: part.manufacturer.value ?? null,
+    pageCount: doc.pages.length,
+    packages: part.packageVariants.map((variant) => ({
+      designator: variant.designator,
+      family: variant.family,
+      leadCount: variant.leadCount
+    })),
+    specPages: null,
+    outlinePage: null,
+    sha256: sha256Hex(bytes),
+    fileName,
+    sourceUrl: options.pdfUrl ?? null,
+    mode: getDeploymentMode()
+  });
+}
+
 export async function POST(request: Request) {
-  const limit = await activeUploadLimiter().check(clientKey(request));
+  const isLookup = (request.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
+  const limit = await (isLookup ? activeLookupLimiter() : activeUploadLimiter()).check(clientKey(request));
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many uploads. Try again shortly.", code: "RATE_LIMITED", mode: getDeploymentMode() },
@@ -68,6 +114,29 @@ export async function POST(request: Request) {
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_PDF_BYTES) {
     return fail("File is larger than the 50MB limit.", "UPLOAD_INVALID", 413);
+  }
+
+  if (isLookup) {
+    if (getDeploymentMode() === "air-gapped") {
+      return fail("Upload the datasheet PDF in air-gapped mode; part-number lookup is disabled.", "INPUT_REQUIRED", 422);
+    }
+    const payload = await request.json().catch(() => null) as { partNumber?: unknown; manufacturer?: unknown } | null;
+    const partNumber = typeof payload?.partNumber === "string" ? payload.partNumber.trim() : "";
+    const manufacturer = typeof payload?.manufacturer === "string" ? payload.manufacturer.trim() : "";
+    if (!/^[A-Za-z0-9][A-Za-z0-9._+\-/ ]{0,79}$/.test(partNumber) || manufacturer.length > 120) {
+      return fail("A valid part number is required.", "INPUT_INVALID", 400);
+    }
+    try {
+      const resolver = await makeResolver(getDeploymentMode());
+      const ref = await resolver?.resolve(partNumber, manufacturer ? { manufacturer } : undefined);
+      if (!ref) return fail(`No public datasheet was found for ${partNumber}. Upload it directly instead.`, "DATASHEET_NOT_FOUND", 404);
+      return await identifyBytes(ref.fileName, ref.bytes, { pdfUrl: ref.pdfUrl, requestedPart: partNumber });
+    } catch {
+      // Resolver and transport detail can contain internal endpoints or
+      // credentials. The action the user can take is stable even when the
+      // underlying backend is not.
+      return fail("The datasheet lookup failed. Try again or upload the PDF directly.", "LOOKUP_FAILED", 502);
+    }
   }
 
   let formData: FormData;
@@ -84,40 +153,7 @@ export async function POST(request: Request) {
   const bytes = await file.arrayBuffer();
 
   try {
-    const { doc, part } = await extractPartRecord(file.name, bytes);
-    const partNumber = part.partNumber.value ?? "";
-
-    return NextResponse.json({
-      partNumber,
-      /**
-       * Where that string came from. Always the file name today, because the
-       * deterministic pass has no reader for it; the field exists so a screen
-       * cannot present one as the other, and so the day a document reading
-       * exists nothing downstream has to change to notice.
-       */
-      partNumberFrom: part.partNumber.method === "user" ? "file-name" : "document",
-      manufacturer: part.manufacturer.value ?? null,
-      pageCount: doc.pages.length,
-      // THE RECORD'S OWN LIST, not a second computation of it.
-      //
-      // `buildPartRecord` already resolves this, and it falls back from the
-      // ordering table to the front matter when the ordering table yields
-      // nothing. Recomputing it here would be a second answer to one question,
-      // and the two would drift the first time either rule changed.
-      packages: part.packageVariants.map((variant) => ({
-        designator: variant.designator,
-        family: variant.family,
-        leadCount: variant.leadCount
-      })),
-      // Both are answered by the read itself, not by this pass. Null rather
-      // than a placeholder: an unread field and a field read as nothing must
-      // never be the same value, which is what shipped a TO-220 as two rows.
-      specPages: null,
-      outlinePage: null,
-      sha256: sha256Hex(bytes),
-      fileName: file.name,
-      mode: getDeploymentMode()
-    });
+    return await identifyBytes(file.name, bytes);
   } catch (error) {
     // Same two doors `/api/parse` uses, and for the same reason: a file that
     // will not open is bad input, not a server fault, and a person seeing

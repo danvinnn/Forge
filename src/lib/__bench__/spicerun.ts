@@ -258,6 +258,12 @@ export async function measurePart(
       const { verifyReference } = await import("../spice/reference");
       const broken = result.subckt.replace(/^\.param outputVoltage=\{(.+)\}$/m, ".param outputVoltage={($1)*0.5}");
       report = await verifyReference(broken, result.block, part, modelCorners);
+    } else if (result.deviceClass?.id === "instrumentation") {
+      const { verifyInstrumentation } = await import("../spice/instrumentation");
+      // K is the defining evidence for this class. Halving it must be observed
+      // through the external resistor, or the rig is not checking the gain law.
+      const broken = result.subckt.replace(/^\.param gainResistance=\{(.+)\}$/m, ".param gainResistance={($1)*0.5}");
+      report = await verifyInstrumentation(broken, result.block, part, modelCorners);
     } else {
       const { verify } = await import("../spice/verify");
       const broken = result.subckt.replace(/\.param GBW_TRIM=[\d.e-]+/, ".param GBW_TRIM=0.5");

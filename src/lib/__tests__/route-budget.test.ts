@@ -38,6 +38,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  DOCUMENT_READ_ROUTE_BUDGET_MS,
   MIN_MODEL_BUDGET_MS,
   RESPONSE_MARGIN_MS,
   TYPICAL_MODEL_CALL_MS,
@@ -47,6 +48,7 @@ import {
 import { resolveChainBudgetMs } from "../retrieval/resolvers/composite";
 
 const ROOT = join(__dirname, "..", "..", "app", "api");
+const REPOSITORY_ROOT = join(ROOT, "..", "..", "..");
 
 /** The `maxDuration` a route declares to the platform, in milliseconds. */
 function declaredCeilingMs(route: string): number {
@@ -66,6 +68,11 @@ function defaultChainBudgetMs(): number {
     if (previous !== undefined) process.env.FORGE_CHAIN_BUDGET_MS = previous;
   }
 }
+
+test("the shared instrument budget matches both declared document routes", () => {
+  assert.equal(declaredCeilingMs("lookup"), DOCUMENT_READ_ROUTE_BUDGET_MS);
+  assert.equal(declaredCeilingMs("parse"), DOCUMENT_READ_ROUTE_BUDGET_MS);
+});
 
 test("a lookup that spends the whole retrieval budget still fits a full model call", () => {
   const ceiling = declaredCeilingMs("lookup");
@@ -89,6 +96,13 @@ test("a lookup that spends the whole retrieval budget still fits a full model ca
   // is never made and the record silently loses the model pass; above the
   // minimum but below a typical call, the call is made, paid for, and abandoned.
   assert.equal(worthAsking(left), true);
+});
+
+test("the deployment template does not silently override the tested retrieval budget", () => {
+  const template = readFileSync(join(REPOSITORY_ROOT, ".env.example"), "utf8");
+  const match = template.match(/^FORGE_CHAIN_BUDGET_MS=(\d+)$/m);
+  assert.ok(match, ".env.example must state the retrieval budget deployments receive");
+  assert.equal(Number(match[1]), defaultChainBudgetMs());
 });
 
 test("the retrieval budget is not the thing that decides whether to ask", () => {
@@ -134,7 +148,7 @@ test("an operator raising the chain budget past the route cannot do it silently"
   // for the model must at least be visible as a failure here rather than as a
   // 504 in production.
   const previous = process.env.FORGE_CHAIN_BUDGET_MS;
-  process.env.FORGE_CHAIN_BUDGET_MS = "200000";
+  process.env.FORGE_CHAIN_BUDGET_MS = "300000";
   try {
     const left = modelBudgetMs(declaredCeilingMs("lookup"), resolveChainBudgetMs());
     assert.ok(left < 0, "a chain budget past the route ceiling must read as no budget at all");

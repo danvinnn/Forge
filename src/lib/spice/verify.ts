@@ -122,19 +122,44 @@ function parse(output: string, pattern: RegExp): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-export async function runNgspice(file: string): Promise<{ stdout: string; ok: boolean }> {
+export type NgspiceFailure = "missing" | "timeout" | "rejected";
+
+export function ngspiceFailureReason(failure: NgspiceFailure | null): string {
+  if (failure === "timeout") return "ngspice did not finish within the 30-second verification budget";
+  if (failure === "rejected") return "ngspice rejected the conformance deck";
+  return "ngspice is not available on this host";
+}
+
+export async function runNgspice(
+  file: string,
+  options: { executable?: string; args?: string[]; timeoutMs?: number } = {}
+): Promise<{ stdout: string; ok: boolean; failure: NgspiceFailure | null }> {
   return new Promise((resolve) => {
     // Production normally resolves ngspice from PATH. Release hosts and CI may
     // keep independently installed tools outside the application PATH, so an
     // explicit executable can be supplied without mutating global process
     // lookup rules.
-    const executable = process.env.NGSPICE_BIN?.trim() || "ngspice";
-    const child = spawn(executable, ["-b", file], { stdio: ["ignore", "pipe", "pipe"] });
+    const executable = options.executable ?? (process.env.NGSPICE_BIN?.trim() || "ngspice");
+    const child = spawn(executable, options.args ?? ["-b", file], { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
-    child.stdout.on("data", (d) => (stdout += String(d)));
-    child.stderr.on("data", (d) => (stdout += String(d)));
-    child.on("error", () => resolve({ stdout: "", ok: false }));
-    child.on("close", () => resolve({ stdout, ok: true }));
+    let settled = false;
+    const append = (data: unknown) => {
+      if (stdout.length < 2_000_000) stdout += String(data).slice(0, 2_000_000 - stdout.length);
+    };
+    const finish = (result: { stdout: string; ok: boolean; failure: NgspiceFailure | null }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
+    child.on("error", () => finish({ stdout, ok: false, failure: "missing" }));
+    child.on("close", (code) => finish({ stdout, ok: code === 0, failure: code === 0 ? null : "rejected" }));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({ stdout, ok: false, failure: "timeout" });
+    }, options.timeoutMs ?? 30_000);
   });
 }
 
@@ -171,13 +196,13 @@ export async function verify(subckt: string, block: ModelBlock, partNumber: stri
 
       const file = join(directory, `${name}-${corner}.cir`);
       await writeFile(file, deck(subckt, name, corner === "typ" ? 1 : corner === "min" ? 2 : 3, aolLinear, gbw, loadCap), "utf8");
-      const { stdout, ok } = await runNgspice(file);
+      const { stdout, ok, failure } = await runNgspice(file);
       if (!ok) {
-        simulatorMissing = true;
+        simulatorMissing ||= failure === "missing";
         for (const parameter of MEASURABLE) {
           if (!usableAt(block, parameter, corners)) continue;
           const expected = valueAt(block, parameter, corner);
-          if (expected !== null) checks.push({ parameter, corner, expected, measured: null, verdict: "unverifiable", reason: "ngspice is not available on this host", errorPct: null });
+          if (expected !== null) checks.push({ parameter, corner, expected, measured: null, verdict: "unverifiable", reason: ngspiceFailureReason(failure), errorPct: null });
         }
         for (const parameter of ["slewRate"] as ModelParameter[]) {
           if (!usableAt(block, parameter, corners)) continue;
