@@ -16,7 +16,7 @@
 //
 // Usage:  npx tsx src/lib/__bench__/packagehint.ts ISO7741 "SOIC (DW)"
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { extractDatasheetText } from "../pdftext";
 import { buildPartRecord } from "../datasheet";
@@ -35,7 +35,16 @@ async function main() {
   const [partNumber, hint] = process.argv.slice(2);
   if (!partNumber) throw new Error("usage: packagehint.ts <PART> [package]");
 
-  const bytes = readFileSync(join(".bench-cache", `${partNumber}.pdf`));
+  // Named, not a bare ENOENT: `.bench-cache/` is gitignored, so on a fresh
+  // checkout this is absent for every part rather than just the one asked for.
+  const source = join(".bench-cache", `${partNumber}.pdf`);
+  if (!existsSync(source)) {
+    throw new Error(
+      `No datasheet at ${source}. This bench reads the gitignored cache, so it runs only on a ` +
+        `machine that has already fetched ${partNumber}.`
+    );
+  }
+  const bytes = readFileSync(source);
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   const doc = await extractDatasheetText(buffer);
 

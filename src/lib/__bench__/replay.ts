@@ -30,7 +30,7 @@
  * Air-gap safe: reads local files, makes no request.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createExportZip, FootprintUnavailableError } from "../exporters";
 import { lastRowIsNumberedThermalPad } from "../extraction/merge";
@@ -81,6 +81,26 @@ interface CachedEntry {
  * and the first only saw text.
  */
 function cachedAnswers(): Map<string, Record<string, CachedValue>> {
+  // NAMED, not a stack trace, and not an empty result.
+  //
+  // `.model-cache/` is gitignored, so on any fresh checkout - a CI runner, a new
+  // laptop - this directory is simply absent. It used to reach `readdirSync` and
+  // come back as an ENOENT stack trace out of the middle of whichever bench was
+  // running, which is how the KiCad job failed on 2026-09-07: the message named
+  // node:fs and never mentioned the cache.
+  //
+  // Returning an empty map would be worse. Thirteen benches read these records,
+  // and a bench that scores zero subjects reports that everything passed. This
+  // repo has paid for checks that quietly stopped checking, so the absence is
+  // raised rather than absorbed.
+  if (!existsSync(CACHE_DIR)) {
+    throw new Error(
+      `No model cache at ${CACHE_DIR}, so there are no records to replay and this bench has checked ` +
+        `nothing. The cache is gitignored and lives only on a machine that has run the model: this ` +
+        `bench is a release step, not something a fresh checkout or CI can run.`
+    );
+  }
+
   const entries: CachedEntry[] = [];
   for (const name of readdirSync(CACHE_DIR).sort()) {
     if (!name.endsWith(".json") || name.startsWith("_")) continue;

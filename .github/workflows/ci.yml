@@ -17,6 +17,14 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The two official-tool acceptance jobs at the bottom are RELEASE steps, run on
+  # purpose rather than on every commit. See the note above the `ltspice` job.
+  workflow_dispatch:
+    inputs:
+      official_tools:
+        description: "Also run the official LTspice and KiCad acceptance jobs"
+        type: boolean
+        default: true
 
 jobs:
   verify:
@@ -139,6 +147,21 @@ jobs:
     name: official LTspice acceptance
     runs-on: windows-latest
     timeout-minutes: 20
+    # RELEASE STEP, NOT A PER-PUSH GATE. Run it from the Actions tab
+    # ("Run workflow"), which is what the `workflow_dispatch` trigger is for.
+    #
+    # This is where package.json already puts it: `bench:model-release` is
+    # `bench:model-capabilities && bench:model-coverage && bench:ltspice`. Putting
+    # it on every push duplicated a release script into the commit path, and it
+    # has never once been green there.
+    #
+    # On 2026-09-07 all 23 cases came back REJECTED with `exit null`, which is the
+    # 30-second timeout and not a refusal: no stderr, no case.log, nothing written
+    # at all. LTspice was installed, launched, and simulated nothing, 23 times,
+    # which is what a GUI application blocking on a first-run dialog looks like.
+    # That is still unfixed. What `verify` covers on every push instead is the
+    # netlist syntax suite and real ngspice runs.
+    if: github.event_name == 'workflow_dispatch' && inputs.official_tools
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -186,6 +209,20 @@ jobs:
     name: official KiCad acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # RELEASE STEP, NOT A PER-PUSH GATE, for the reason on the `ltspice` job.
+    # package.json already puts this one inside `bench:cad-release`.
+    #
+    # It CANNOT pass on a runner as written: `bench:kicad` builds from
+    # `replayRecords()`, which reads the gitignored `.model-cache/`, so a fresh
+    # checkout has no records to emit and nothing to ask KiCad about. On
+    # 2026-09-07 it never reached KiCad at all; it died on ENOENT before writing
+    # its first file.
+    #
+    # Every push still checks KiCad output through `kicad.test.ts` in `verify`,
+    # which reads emitted footprints back with kiutils. What this job adds on top
+    # is the official kicad-cli across the whole cached corpus, which is exactly
+    # the part a runner cannot reach.
+    if: github.event_name == 'workflow_dispatch' && inputs.official_tools
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

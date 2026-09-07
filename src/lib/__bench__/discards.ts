@@ -63,7 +63,7 @@
  * Free. No network, no model, no spend.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isGapFreeSequence, normalizeModelPins } from "../extraction/merge";
 import { extractionFields } from "../extraction/contracts";
@@ -120,6 +120,16 @@ function pinPass(): boolean {
   let withTable = 0;
   let accepted = 0;
   const discards: Discard[] = [];
+
+  // The cache is gitignored, so it is absent on any fresh checkout. Say which
+  // directory and why rather than letting readdirSync raise a bare ENOENT out of
+  // the middle of the bench.
+  if (!existsSync(CACHE)) {
+    throw new Error(
+      `No model cache at ${CACHE}, so this bench has checked nothing. It is a release step that ` +
+        `needs a machine which has run the model; the cache is never committed.`
+    );
+  }
 
   for (const file of readdirSync(CACHE)) {
     if (!file.endsWith(".json")) continue;
