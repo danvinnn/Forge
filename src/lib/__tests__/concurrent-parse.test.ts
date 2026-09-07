@@ -26,8 +26,16 @@ import { POST } from "../../app/api/parse/route";
  * than having to be inferred.
  */
 
-const NCP = readFileSync(join(process.cwd(), ".bench-cache", "NCP1200.pdf"));
-const DRV = readFileSync(join(process.cwd(), ".bench-cache", "DRV8825.pdf"));
+// TRACKED fixtures, deliberately. `.bench-cache/` is gitignored - no vendor
+// datasheet is ever committed - so a unit test cannot see it, and one that
+// reads from it runs only on the machine that wrote it. These two are in
+// test-data/ and on the corpus allowlist.
+//
+// They differ in BYTES and in NAME, which is what cross-talk needs to be
+// visible: the readable one carries a text layer naming its part, the other
+// has no text layer at all.
+const READABLE = readFileSync(join(process.cwd(), "test-data", "LMP7704-SP.pdf"));
+const SCANNED = readFileSync(join(process.cwd(), "test-data", "scanned-no-text-layer.pdf"));
 
 /** A reader that answers with whichever part number it was shown. */
 function reader(): Promise<{ url: string; close: () => Promise<void>; seen: string[] }> {
@@ -39,7 +47,11 @@ function reader(): Promise<{ url: string; close: () => Promise<void>; seen: stri
       req.on("end", () => {
         // Whichever of the two documents this prompt is about. Deliberately
         // crude: the point is that the ANSWER tracks the REQUEST.
-        const part = /DRV8825/i.test(body) ? "DRV8825" : "NCP1200";
+        //
+        // Keyed on the TEXT LAYER, which is what the prompt actually carries;
+        // the filename is not in it. The scanned fixture has no text layer, so
+        // the absence of the part name is itself the discriminator.
+        const part = /LMP7704/i.test(body) ? "LMP7704-SP" : "SCANNED";
         seen.push(part);
         const answer = JSON.stringify({
           partNumber: { value: part, confidence: 0.9, citation: { page: 1, snippet: part } }
@@ -82,8 +94,8 @@ test("two uploads in flight together each come back as themselves", async () => 
     // Started together, deliberately, so the two runs interleave inside the
     // route rather than following one another.
     const [first, second] = await Promise.all([
-      POST(upload(NCP, "NCP1200.pdf")),
-      POST(upload(DRV, "DRV8825.pdf"))
+      POST(upload(READABLE, "LMP7704-SP.pdf")),
+      POST(upload(SCANNED, "scanned-no-text-layer.pdf"))
     ]);
     const [a, b] = (await Promise.all([first.json(), second.json()])) as Array<{
       part?: { partNumber?: { value?: string }; sourceFileName?: string };
@@ -94,8 +106,8 @@ test("two uploads in flight together each come back as themselves", async () => 
     // rate-limited or refused response is a different outcome and is allowed;
     // a SWAPPED one is not.
     for (const [answer, want] of [
-      [a, "NCP1200"],
-      [b, "DRV8825"]
+      [a, "LMP7704-SP"],
+      [b, "scanned-no-text-layer"]
     ] as const) {
       const file = answer.source?.fileName ?? answer.part?.sourceFileName ?? "";
       if (file) assert.match(file, new RegExp(want, "i"), `a request for ${want} came back carrying ${file}`);
@@ -123,7 +135,10 @@ test("the same document twice at once gives the same answer twice", async () => 
   process.env.FORGE_LOCAL_MODEL_URL = server.url;
   process.env.FORGE_DEPLOYMENT_MODE = "air-gapped";
   try {
-    const [first, second] = await Promise.all([POST(upload(NCP, "NCP1200.pdf")), POST(upload(NCP, "NCP1200.pdf"))]);
+    const [first, second] = await Promise.all([
+      POST(upload(READABLE, "LMP7704-SP.pdf")),
+      POST(upload(READABLE, "LMP7704-SP.pdf"))
+    ]);
     const [a, b] = (await Promise.all([first.json(), second.json()])) as Array<Record<string, unknown>>;
     assert.equal(first.status, second.status);
     if (first.status === 200) {

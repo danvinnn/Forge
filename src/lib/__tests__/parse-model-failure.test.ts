@@ -41,7 +41,11 @@ import { POST } from "../../app/api/parse/route";
  * route runs exactly as it does in production.
  */
 
-const PDF = readFileSync(join(process.cwd(), ".bench-cache", "NCP1200.pdf"));
+// A TRACKED fixture. `.bench-cache/` is gitignored - no vendor datasheet is
+// ever committed - so a unit test cannot see it. What this file needs is any
+// document the route will genuinely read; the failures under test are the
+// READER's, supplied by the server below.
+const PDF = readFileSync(join(process.cwd(), "test-data", "LMP7704-SP.pdf"));
 
 function listen(handler: (body: string) => { status: number; body: string }): Promise<{ url: string; close: () => Promise<void> }> {
   return new Promise((resolve) => {
