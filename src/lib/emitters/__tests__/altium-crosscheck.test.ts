@@ -24,6 +24,29 @@ import { type PinRecord, type ResolvedPart } from "../../types";
  * would very likely have been refused by Altium without a word.
  */
 
+/**
+ * A hung oracle and a missing one are different problems and must not share a
+ * message: one is a defect to chase, the other is a machine to set up.
+ */
+function timedOut(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (("code" in error && (error as { code?: unknown }).code === "ETIMEDOUT") ||
+      ("signal" in error && (error as { signal?: unknown }).signal === "SIGTERM"))
+  );
+}
+
+/**
+ * How long the oracle gets before it is treated as hung.
+ *
+ * These calls had NO timeout, which means a stuck reader blocks the whole test
+ * run rather than failing one test. CI kills the step at ten minutes, and what
+ * it reports then is exit code 124 and nothing else: no test name, no file.
+ * A bounded wait turns that into a named failure with the message below.
+ */
+const ORACLE_TIMEOUT_MS = 120_000;
+
 const ORACLE = join(
   fileURLToPath(new URL("../../../../", import.meta.url)),
   "tools/altium-oracle/bin/Release/net10.0/altium-oracle"
@@ -78,8 +101,14 @@ function crossCheck(library: Buffer, extension: ".PcbLib" | ".SchLib"): CrossChe
 
   let stdout: string;
   try {
-    stdout = execFileSync(ORACLE, [path], { encoding: "utf8" });
+    stdout = execFileSync(ORACLE, [path], { encoding: "utf8", timeout: ORACLE_TIMEOUT_MS });
   } catch (error) {
+    if (timedOut(error)) {
+      throw new Error(
+        `The oracle did not answer within ${ORACLE_TIMEOUT_MS / 1000}s and was killed. It is HUNG, not missing.`
+      );
+    }
+
     const detail = error instanceof Error && "stdout" in error ? String(error.stdout) : String(error);
     throw new Error(`AltiumSharp could not read the library:\n${detail}`);
   }
@@ -127,8 +156,14 @@ function roundTrip(library: Buffer, extension: ".PcbLib" | ".SchLib"): RoundTrip
 
   let stdout: string;
   try {
-    stdout = execFileSync(ORACLE, ["--roundtrip", path], { encoding: "utf8" });
+    stdout = execFileSync(ORACLE, ["--roundtrip", path], { encoding: "utf8", timeout: ORACLE_TIMEOUT_MS });
   } catch (error) {
+    if (timedOut(error)) {
+      throw new Error(
+        `The oracle did not answer within ${ORACLE_TIMEOUT_MS / 1000}s and was killed. It is HUNG, not missing.`
+      );
+    }
+
     const detail = error instanceof Error && "stdout" in error ? String(error.stdout) : String(error);
     throw new Error(`AltiumSharp could not round-trip the library:\n${detail}`);
   }

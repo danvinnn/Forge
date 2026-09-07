@@ -23,6 +23,29 @@ import { type PinRecord, type ResolvedPart } from "../../types";
  * parse to plausible numbers and still be broken.
  */
 
+/**
+ * A hung oracle and a missing one are different problems and must not share a
+ * message: one is a defect to chase, the other is a machine to set up.
+ */
+function timedOut(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (("code" in error && (error as { code?: unknown }).code === "ETIMEDOUT") ||
+      ("signal" in error && (error as { signal?: unknown }).signal === "SIGTERM"))
+  );
+}
+
+/**
+ * How long the oracle gets before it is treated as hung.
+ *
+ * These calls had NO timeout, which means a stuck reader blocks the whole test
+ * run rather than failing one test. CI kills the step at ten minutes, and what
+ * it reports then is exit code 124 and nothing else: no test name, no file.
+ * A bounded wait turns that into a named failure with the message below.
+ */
+const ORACLE_TIMEOUT_MS = 120_000;
+
 const ORACLE = join(fileURLToPath(new URL(".", import.meta.url)), "altium-oracle.py");
 
 interface OraclePad {
@@ -64,11 +87,17 @@ function readBack(library: Buffer, name = "forge-test"): OracleResult {
 
   let stdout: string;
   try {
-    stdout = execFileSync("python3", [ORACLE, path], { encoding: "utf8" });
+    stdout = execFileSync("python3", [ORACLE, path], { encoding: "utf8", timeout: ORACLE_TIMEOUT_MS });
   } catch (error) {
     // Deliberately not skipped. A suite that quietly stops checking the oracle
     // when the oracle is missing gives exactly the false confidence this whole
     // arrangement exists to prevent.
+    if (timedOut(error)) {
+      throw new Error(
+        `The oracle did not answer within ${ORACLE_TIMEOUT_MS / 1000}s and was killed. It is HUNG, not missing.`
+      );
+    }
+
     const detail = error instanceof Error && "stderr" in error ? String(error.stderr) : String(error);
     throw new Error(
       `The Altium oracle did not complete. It needs python3 with pyaltiumlib (pip install pyaltiumlib).\n${detail}`
