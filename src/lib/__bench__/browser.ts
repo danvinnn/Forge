@@ -218,7 +218,20 @@ function datasheets(): string[] {
   const chosen = PARTS.length > 0 ? PARTS.map((name) => join(ROOT, ".bench-cache", `${name}.pdf`)) : DEFAULT_PDFS;
   return chosen.filter((path) => {
     if (existsSync(path)) return true;
-    problems.push(`[missing] ${path}`);
+    // A CACHED DATASHEET THAT IS NOT HERE IS NOT A BROWSER PROBLEM.
+    //
+    // Three of the four defaults live in the gitignored `.bench-cache/`, so on a
+    // fresh checkout - a CI runner most of all - they cannot exist. Counting
+    // their absence as something the browser did wrong failed this bench on
+    // every CI run once the step was finally reached (2026-09-07), while the
+    // page itself was clean.
+    //
+    // Under `--full` it stays a problem, because that pass is run deliberately
+    // on a machine that HAS the caches and its whole purpose is to drive these
+    // documents; a missing one there means the run silently covered less than it
+    // was asked to. In the default pass nothing drives them, and the coverage
+    // line below already reports which paths went unexercised.
+    if (FULL) problems.push(`[missing] ${path}`);
     return false;
   });
 }
