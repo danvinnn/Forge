@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertUnderLimit, bills, estimateUsd, readSpend, recordSpend, SpendLimitReached, spendLimitUsd } from "../spend";
@@ -14,6 +14,20 @@ import { assertUnderLimit, bills, estimateUsd, readSpend, recordSpend, SpendLimi
  * in the bench's own version of this file. A new provider slipping past the
  * "does it bill" test ran with NO CEILING AT ALL for a whole day, and spend was
  * once under-reported threefold by counting only the attempt that succeeded.
+ */
+
+/**
+ * WHY EVERY TEST HERE DECLARES A FIVE-SECOND TIMEOUT
+ *
+ * This file hung on the CI runner three times running (2026-09-07) and never on
+ * a developer's machine. The first hang killed the whole step anonymously at ten
+ * minutes; a file-level bound then named the FILE but not the test, because the
+ * file's timer starts before any subtest's and therefore always fires first,
+ * taking the child's buffered output with it.
+ *
+ * Every test below is synchronous fs work measured in microseconds, so a bound
+ * of five seconds cannot fire on correct behaviour. When one of them does trip
+ * it, node:test names that test instead of the file, which is the whole point.
  */
 
 function withLedger<T>(run: (path: string) => T): T {
@@ -31,7 +45,7 @@ function withLedger<T>(run: (path: string) => T): T {
   }
 }
 
-test("a local model is free, so it is neither counted nor capped", () => {
+test("a local model is free, so it is neither counted nor capped", { timeout: 5_000 }, () => {
   // Not negotiable. An air-gapped customer runs their own weights on their own
   // hardware; charging them against a cloud price list reports a bill nobody
   // sent, and stopping them at a ceiling takes the product away from the
@@ -46,7 +60,7 @@ test("a local model is free, so it is neither counted nor capped", () => {
   });
 });
 
-test("anything that is not local is assumed to bill", () => {
+test("anything that is not local is assumed to bill", { timeout: 5_000 }, () => {
   // FREE IS THE EXCEPTION. The bench's version asked `startsWith("gemini")`,
   // which is a list of the providers that bill, and the Vertex path arrived not
   // matching it: reported $0.00, wrote nothing, and ran with no ceiling.
@@ -55,7 +69,7 @@ test("anything that is not local is assumed to bill", () => {
   assert.equal(bills("some-provider-nobody-has-written-yet"), true);
 });
 
-test("the ledger accumulates across calls and survives being read back", () => {
+test("the ledger accumulates across calls and survives being read back", { timeout: 5_000 }, () => {
   withLedger((path) => {
     const before = readSpend();
     recordSpend("vertex:gemini-3.6-flash", { inputTokens: 1_000_000, outputTokens: 0 });
@@ -76,7 +90,7 @@ test("the ledger accumulates across calls and survives being read back", () => {
  * That is the behaviour, not an accident of the test: deleting the ledger must
  * not reset the ceiling. A cap a `rm` can clear is not a cap.
  */
-test("every retry is counted, because every attempt is billed", () => {
+test("every retry is counted, because every attempt is billed", { timeout: 5_000 }, () => {
   withLedger(() => {
     const before = readSpend().calls;
     recordSpend("vertex:gemini-3.6-flash", { inputTokens: 0, outputTokens: 0 }, 3);
@@ -84,7 +98,7 @@ test("every retry is counted, because every attempt is billed", () => {
   });
 });
 
-test("a call that reports no tokens still moves the count", () => {
+test("a call that reports no tokens still moves the count", { timeout: 5_000 }, () => {
   // A provider that stops reporting usage must not be able to zero the total.
   withLedger(() => {
     const before = readSpend().calls;
@@ -93,7 +107,7 @@ test("a call that reports no tokens still moves the count", () => {
   });
 });
 
-test("deleting the ledger file does not clear the ceiling", () => {
+test("deleting the ledger file does not clear the ceiling", { timeout: 5_000 }, () => {
   withLedger(() => {
     process.env.FORGE_SPEND_LIMIT_USD = "1";
     recordSpend("vertex:gemini-3.6-flash", { inputTokens: 8_000_000, outputTokens: 0 });
@@ -106,7 +120,7 @@ test("deleting the ledger file does not clear the ceiling", () => {
   });
 });
 
-test("the ceiling is cumulative, and refuses BEFORE the call", () => {
+test("the ceiling is cumulative, and refuses BEFORE the call", { timeout: 5_000 }, () => {
   // Per-run was the wrong scope and would have prevented nothing: $4.04 across
   // nineteen runs whose largest was $1.02.
   withLedger(() => {
@@ -116,7 +130,7 @@ test("the ceiling is cumulative, and refuses BEFORE the call", () => {
   });
 });
 
-test("a limit of zero disables the ceiling", () => {
+test("a limit of zero disables the ceiling", { timeout: 5_000 }, () => {
   withLedger(() => {
     process.env.FORGE_SPEND_LIMIT_USD = "0";
     recordSpend("vertex:gemini-3.6-flash", { inputTokens: 100_000_000, outputTokens: 0 });
@@ -124,7 +138,7 @@ test("a limit of zero disables the ceiling", () => {
   });
 });
 
-test("an unset or nonsense limit falls back to a real number, not to no limit", () => {
+test("an unset or nonsense limit falls back to a real number, not to no limit", { timeout: 5_000 }, () => {
   // The unknown case has to land on the safe side. Switching provider once
   // silently disabled the ceiling entirely.
   const keep = process.env.FORGE_SPEND_LIMIT_USD;
@@ -141,9 +155,19 @@ test("an unset or nonsense limit falls back to a real number, not to no limit", 
   }
 });
 
-test("an unwritable ledger does not throw, because bookkeeping must not cost a library", () => {
+test("an unwritable ledger does not throw, because bookkeeping must not cost a library", { timeout: 5_000 }, () => {
   const keep = process.env.FORGE_SPEND_LEDGER;
-  process.env.FORGE_SPEND_LEDGER = "/proc/definitely/not/writable/spend.json";
+  // A path UNDER A REGULAR FILE, which is ENOTDIR on every platform and needs no
+  // privileges to arrange.
+  //
+  // This was `/proc/definitely/not/writable/spend.json`, which is not portable in
+  // either direction: `/proc` does not exist on macOS, so the test passed there
+  // for the wrong reason (ENOENT, not unwritable), and on the Linux CI runner
+  // this file hung three times running. A temp file standing in for a directory
+  // is unwritable the same way everywhere, and the failure is immediate.
+  const blocker = join(mkdtempSync(join(tmpdir(), "forge-spend-block-")), "not-a-directory");
+  writeFileSync(blocker, "");
+  process.env.FORGE_SPEND_LEDGER = join(blocker, "spend.json");
   try {
     assert.doesNotThrow(() => recordSpend("vertex:gemini-3.6-flash", { inputTokens: 1000, outputTokens: 10 }));
   } finally {
@@ -152,7 +176,7 @@ test("an unwritable ledger does not throw, because bookkeeping must not cost a l
   }
 });
 
-test("the estimate is the published Flash rate", () => {
+test("the estimate is the published Flash rate", { timeout: 5_000 }, () => {
   assert.equal(estimateUsd(undefined), 0);
   assert.ok(Math.abs(estimateUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }) - 2.8) < 1e-9);
 });
