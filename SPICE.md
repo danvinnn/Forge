@@ -4350,3 +4350,31 @@ Focused route/import tests, the complete 1,251-test suite, TypeScript, ESLint,
 the production build, and the no-spend and authorized full production-browser
 passes are green. Official KiCad on Linux and official LTspice on Windows remain
 CI proofs that require this uncommitted tree to be committed and pushed first.
+
+## Manual prerelease tool gates repaired, 2026-09-07
+
+The Windows LTspice runner was not rejecting Forge output: every invocation
+timed out before writing a log, so the old harness mislabeled an instrument
+failure as 23 artifact failures. The manual job now uses the official macOS
+package and the headless `LTspice -b <absolute netlist>` route already measured
+in section 20. The package is checked by macOS for a trusted installer signature
+and notarization before execution, and it is unpacked without a privileged
+install. Timeouts, signal exits, and missing logs are explicit hard instrument
+failures.
+
+The current official Analog Devices package accepted all five generated model
+classes and all eighteen standalone vendor-adapter cases: **23/23 accepted**.
+The complete repository suite is now **1,253/1,253**, with TypeScript, ESLint,
+and the production build green.
+
+The KiCad job is self-contained as well. Four tracked generator inputs cover
+dual-row SMD and KiCad's `no_connect` token, a rectangular four-sided no-lead
+package with a thermal land, through-hole copper/drills, and a ball grid. The
+ignored model cache is optional extra breadth and its absence cannot produce an
+ENOENT or a zero-subject pass. Official KiCad 10.0.5 accepted the exact clean-
+checkout set (4 footprints and 4 symbols), then accepted all 80 locally
+buildable footprints and all 80 symbols when the replay cache was included.
+
+The remaining step is evidence about GitHub's runner environment, not a known
+product or harness repair: commit/push this tree, manually dispatch `CI` with
+`official_tools` enabled, and require both jobs to be green before release.

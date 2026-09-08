@@ -49,6 +49,7 @@ import { tmpdir } from "node:os";
 import JSZip from "jszip";
 import { createExportZip } from "../exporters";
 import { replayRecords } from "./replay";
+import { KICAD_ACCEPTANCE_FIXTURES } from "./kicad-fixtures";
 
 /** The binary, from the environment or from the usual places. */
 function kicadCli(): string | null {
@@ -82,7 +83,12 @@ async function main(): Promise<void> {
   let footprints = 0;
   let refusedToBuild = 0;
 
-  for (const part of replayRecords()) {
+  const cachePresent = !process.argv.includes("--fixtures-only") && existsSync(join(process.cwd(), ".model-cache"));
+  const cached = cachePresent ? replayRecords() : [];
+  const records = [...KICAD_ACCEPTANCE_FIXTURES, ...cached];
+  if (records.length === 0) throw new Error("KiCad acceptance has no records and would check nothing.");
+
+  for (const part of records) {
     let bundle;
     try {
       bundle = await createExportZip(part, "kicad", {});
@@ -108,6 +114,10 @@ async function main(): Promise<void> {
   }
 
   console.log(`\nAsked KiCad ${version} to open everything this product emits. No network, no spend.\n`);
+  console.log(
+    `  ${KICAD_ACCEPTANCE_FIXTURES.length} tracked arrangement fixture(s)` +
+      (cachePresent ? ` plus ${cached.length} local replay record(s).` : "; no optional local replay cache present.")
+  );
   console.log(`  ${footprints} footprint(s) and ${symbolOwner.size} symbol librar(ies) built.`);
   if (refusedToBuild > 0) console.log(`  ${refusedToBuild} part(s) did not build at all; that is bench:replay's subject.`);
 

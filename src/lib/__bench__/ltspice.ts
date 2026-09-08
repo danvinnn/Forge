@@ -61,6 +61,35 @@ const PRIMITIVE_CASES: Readonly<Record<string, { source: string; instanceValue?:
 
 const LARGE_SUBCIRCUIT_TERMINALS = Array.from({ length: 128 }, (_, index) => `T${index + 1}`);
 
+/**
+ * Run the real simulator and reject an instrument failure as an instrument
+ * failure. A timeout has no exit status; treating that as a bad model produced
+ * 23 misleading "REJECTED" rows in CI while LTspice had simulated nothing.
+ */
+function simulate(executable: string, folder: string): { stderr: string; log: string; status: number } {
+  const netlist = path.join(folder, "case.net");
+  const run = spawnSync(executable, ["-b", netlist], {
+    cwd: folder,
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 2 * 1024 * 1024
+  });
+  if (run.error) {
+    const code = "code" in run.error ? String(run.error.code) : "unknown";
+    throw new Error(`LTspice could not execute ${path.basename(folder)} (${code}): ${run.error.message}`);
+  }
+  if (run.status === null) {
+    throw new Error(`LTspice terminated without an exit status for ${path.basename(folder)} (signal ${run.signal ?? "unknown"}).`);
+  }
+  const logPath = path.join(folder, "case.log");
+  if (!fs.existsSync(logPath) || fs.statSync(logPath).size === 0) {
+    throw new Error(
+      `LTspice exited ${run.status} for ${path.basename(folder)} but wrote no simulation log; the acceptance gate checked nothing.`
+    );
+  }
+  return { stderr: run.stderr ?? "", log: fs.readFileSync(logPath).toString("utf16le"), status: run.status };
+}
+
 async function main(): Promise<void> {
   const vendorOnly = process.argv.includes("--vendor-only");
   const executable = process.env.LTSPICE_BIN;
@@ -84,12 +113,10 @@ async function main(): Promise<void> {
         ".end",
         ""
       ].join("\n"));
-      const run = spawnSync(executable, ["-b", "case.net"], { cwd: folder, encoding: "utf8", timeout: 30_000 });
-      const logPath = path.join(folder, "case.log");
-      const log = fs.existsSync(logPath) ? fs.readFileSync(logPath).toString("utf16le") : "";
-      const rejected = run.status !== 0 || /fatal error|unknown subckt|missing node|syntax error/i.test(`${run.stderr}\n${log}`);
+      const run = simulate(executable, folder);
+      const rejected = run.status !== 0 || /fatal error|unknown subckt|missing node|syntax error/i.test(`${run.stderr}\n${run.log}`);
       console.log(`${one.part.padEnd(16)} ${rejected ? "REJECTED" : "accepted"}`);
-      if (rejected) failures.push(`${one.part}: ${run.stderr || log.slice(0, 500) || `exit ${run.status}`}`);
+      if (rejected) failures.push(`${one.part}: ${run.stderr || run.log.slice(0, 500) || `exit ${run.status}`}`);
     }
     const vendorCases: Array<{ part: string; source: string; circuit: string[] }> = [
       {
@@ -142,12 +169,10 @@ async function main(): Promise<void> {
         ".end",
         ""
       ].join("\n"));
-      const run = spawnSync(executable, ["-b", "case.net"], { cwd: folder, encoding: "utf8", timeout: 30_000 });
-      const logPath = path.join(folder, "case.log");
-      const log = fs.existsSync(logPath) ? fs.readFileSync(logPath).toString("utf16le") : "";
-      const rejected = run.status !== 0 || /fatal error|unknown subckt|unknown device|unrecognized|missing node|syntax error|can't find definition/i.test(`${run.stderr}\n${log}`);
+      const run = simulate(executable, folder);
+      const rejected = run.status !== 0 || /fatal error|unknown subckt|unknown device|unrecognized|missing node|syntax error|can't find definition/i.test(`${run.stderr}\n${run.log}`);
       console.log(`${`vendor ${one.part}`.padEnd(16)} ${rejected ? "REJECTED" : "accepted"}`);
-      if (rejected) failures.push(`${one.part}: ${run.stderr || log.slice(0, 500) || `exit ${run.status}`}`);
+      if (rejected) failures.push(`${one.part}: ${run.stderr || run.log.slice(0, 500) || `exit ${run.status}`}`);
     }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

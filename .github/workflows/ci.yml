@@ -145,7 +145,7 @@ jobs:
 
   ltspice:
     name: official LTspice acceptance
-    runs-on: windows-latest
+    runs-on: macos-latest
     timeout-minutes: 20
     # RELEASE STEP, NOT A PER-PUSH GATE. Run it from the Actions tab
     # ("Run workflow"), which is what the `workflow_dispatch` trigger is for.
@@ -155,12 +155,10 @@ jobs:
     # it on every push duplicated a release script into the commit path, and it
     # has never once been green there.
     #
-    # On 2026-09-07 all 23 cases came back REJECTED with `exit null`, which is the
-    # 30-second timeout and not a refusal: no stderr, no case.log, nothing written
-    # at all. LTspice was installed, launched, and simulated nothing, 23 times,
-    # which is what a GUI application blocking on a first-run dialog looks like.
-    # That is still unfixed. What `verify` covers on every push instead is the
-    # netlist syntax suite and real ngspice runs.
+    # Kept separate because downloading a desktop simulator on every push
+    # is slow and brittle. The runner below distinguishes simulator startup
+    # failures from rejected netlists and stops after the first infrastructure
+    # failure, so a first-run dialog cannot masquerade as 23 model failures.
     if: github.event_name == 'workflow_dispatch' && inputs.official_tools
     steps:
       - uses: actions/checkout@v4
@@ -170,38 +168,25 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Install official LTspice
-        shell: powershell
+      - name: Unpack official LTspice
+        shell: bash
         run: |
-          $installer = Join-Path $env:RUNNER_TEMP "LTspice64.msi"
-          $installLog = Join-Path $env:RUNNER_TEMP "LTspice-install.log"
+          package="$RUNNER_TEMP/LTspice.pkg"
+          expanded="$RUNNER_TEMP/LTspice-expanded"
+          curl --fail --location --retry 4 --retry-delay 5 --retry-all-errors \
+            --connect-timeout 30 --max-time 600 \
+            --output "$package" "https://LTspice.analog.com/download/MacOS/latest/LTspice.pkg"
 
-          # Invoke-WebRequest spent almost eight minutes downloading this 170 MB
-          # MSI on the hosted runner and then exited without installing it. curl
-          # is already part of Windows Server, retries transient CDN failures, and
-          # returns a useful status instead of leaving a partial MSI behind.
-          & curl.exe --fail --location --retry 4 --retry-delay 5 --retry-all-errors `
-            --connect-timeout 30 --max-time 600 `
-            --output $installer "https://ltspice.analog.com/software/LTspice64.msi"
-          if ($LASTEXITCODE -ne 0) { throw "The official LTspice installer download failed with curl exit code $LASTEXITCODE." }
-
-          $signature = Get-AuthenticodeSignature $installer
-          if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "Analog Devices") {
-            throw "The downloaded LTspice installer does not have a valid Analog Devices signature."
-          }
-
-          $arguments = @("/i", $installer, "/qn", "/norestart", "/L*v", $installLog)
-          $process = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
-          # 3010 is MSI success with a reboot requested; /norestart keeps the
-          # hosted runner alive and LTspice is usable immediately.
-          if ($process.ExitCode -notin @(0, 3010)) {
-            if (Test-Path $installLog) { Get-Content $installLog -Tail 200 }
-            throw "LTspice installer exited $($process.ExitCode)"
-          }
-          $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA) | Where-Object { $_ -and (Test-Path $_) }
-          $binary = Get-ChildItem $roots -Filter "LTspice.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $binary) { throw "The installed LTspice executable was not found." }
-          "LTSPICE_BIN=$($binary.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # This checks Apple's installer signature and notarization before any
+          # downloaded executable is launched. No privileged install is needed.
+          pkgutil --check-signature "$package"
+          pkgutil --expand-full "$package" "$expanded"
+          binary="$(find "$expanded" -type f -path '*/LTspice.app/Contents/MacOS/LTspice' -print -quit)"
+          if [[ -z "$binary" ]]; then
+            echo "::error::The official package contained no LTspice executable."
+            exit 1
+          fi
+          echo "LTSPICE_BIN=$binary" >> "$GITHUB_ENV"
       - name: Run every generated class and vendor adapter in official LTspice
         run: npm run bench:ltspice
 
@@ -212,16 +197,9 @@ jobs:
     # RELEASE STEP, NOT A PER-PUSH GATE, for the reason on the `ltspice` job.
     # package.json already puts this one inside `bench:cad-release`.
     #
-    # It CANNOT pass on a runner as written: `bench:kicad` builds from
-    # `replayRecords()`, which reads the gitignored `.model-cache/`, so a fresh
-    # checkout has no records to emit and nothing to ask KiCad about. On
-    # 2026-09-07 it never reached KiCad at all; it died on ENOENT before writing
-    # its first file.
-    #
-    # Every push still checks KiCad output through `kicad.test.ts` in `verify`,
-    # which reads emitted footprints back with kiutils. What this job adds on top
-    # is the official kicad-cli across the whole cached corpus, which is exactly
-    # the part a runner cannot reach.
+    # Tracked fixtures make this self-contained on a fresh runner. A developer's
+    # ignored replay cache is useful additional breadth when present, but it is
+    # never required for this official-reader gate to exercise real output.
     if: github.event_name == 'workflow_dispatch' && inputs.official_tools
     steps:
       - uses: actions/checkout@v4

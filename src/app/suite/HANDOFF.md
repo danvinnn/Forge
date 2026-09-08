@@ -427,23 +427,23 @@ destination board's design rules rather than completely in the library; Forge
 does not substitute the common 2:1 setting.
 
 CI installs and executes ngspice before the simulator-aware test suite. A
-separate Windows job installs official Analog Devices LTspice and runs every
-declared vendor adapter contract in the real customer simulator. Cached-
-datasheet representative models remain in the explicit release bench because
-those PDFs are intentionally not committed to this repository.
+manual macOS prerelease job unpacks the signed and notarized official Analog
+Devices LTspice package without installing it, then runs every generated model
+class and declared vendor-adapter contract in the real customer simulator.
 
-A separate Linux job installs KiCad and asks `kicad-cli` to parse and render
-every generated symbol and footprint. `bench:cad-release` invokes that stage in
-gate mode, so a machine with no KiCad fails rather than printing that it checked
-nothing and exiting green.
+A separate Linux prerelease job installs KiCad and asks `kicad-cli` to parse and
+render every generated symbol and footprint. Four tracked records cover dual-
+row SMD (including `no_connect`), rectangular quad plus thermal land,
+through-hole, and grid-array placement on a clean checkout. An ignored local
+replay cache adds breadth when present but is never the gate's only input.
+`bench:cad-release` invokes that stage in gate mode, so a machine with no KiCad
+fails rather than printing that it checked nothing and exiting green.
 
-The last main-branch CI run before this handoff hung in its first test command
-until GitHub's six-hour limit and failed while installing LTspice. Every
-ngspice subprocess now has a tested 30-second/2-MB boundary, each CI test command
-has a ten-minute boundary, and the jobs themselves have explicit timeouts. The
-repaired LTspice install uses retrying curl, validates the Analog Devices
-signature, accepts MSI reboot-success code 3010, and prints the install log on
-failure. These paths still need their first run after this diff is committed.
+The Windows LTspice prerelease attempt installed successfully but every batch
+process timed out without a log, consistent with a first-run GUI block. The job
+now uses the already-proven macOS headless path. The harness treats timeout,
+signal termination, and a missing simulation log as instrument failures and
+stops immediately instead of reporting every artifact as rejected.
 
 ## Manufacturer STEP models, 2026-09-07
 
@@ -459,8 +459,10 @@ missing value must not withhold the valid KiCad bundle.
 An imported official model replaces an unavailable approximate generated body;
 it does not relax terminal, copper, or pinout assurance. Export request limits
 are enforced on the actual UTF-8 body, not only a client-controlled
-`Content-Length`. The local final state is 1,251/1,251 tests, clean TypeScript
-and ESLint, a successful production build, green frozen CAD/SPICE gates, and
-green no-spend plus authorized full production-browser passes. The official
-KiCad/Linux and LTspice/Windows CI jobs still require an explicitly authorized
-commit and push.
+`Content-Length`. The local final state after repairing the manual prerelease
+jobs is 1,253/1,253 tests, clean TypeScript and ESLint, and a successful
+production build. Official LTspice accepted all 23 generated/emitted cases.
+Official KiCad 10.0.5 plotted all 80 locally available footprints and opened
+all 80 symbol libraries; the clean-checkout subset independently passed 4/4
+footprints and 4/4 symbols. The workflow version of these two proofs still
+requires a commit/push and a manual dispatch with `official_tools` enabled.
