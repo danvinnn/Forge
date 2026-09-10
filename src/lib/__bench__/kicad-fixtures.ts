@@ -32,6 +32,7 @@ const dimensions = (
   leadForm: null,
   mounting: null,
   leadDiameterMm: null,
+  leadThicknessMm: null,
   holeDiameterMm: null,
   vacantLeadSlot: null,
   leadsPerSide: null,

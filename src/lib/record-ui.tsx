@@ -298,11 +298,22 @@ export function RecordPanel({
  * without being mentioned only where two INDEPENDENT readings of this datasheet
  * agree on it, and everything that did not clear that bar is here.
  *
- * Above the review panel and never folded, because it is the shorter and the
- * more consequential of the two: the panel below says how confident ONE reading
- * was, this says whether a second one agreed. Bounded at five by `MAX_FLAGGED`;
- * past that the chooser refuses the package outright rather than handing back a
- * form.
+ * Above the review panel, because it is the shorter and the more consequential
+ * of the two: the panel below says how confident ONE reading was, this says
+ * whether a second one agreed. Bounded at five by `MAX_FLAGGED`; past that the
+ * chooser refuses the package outright rather than handing back a form.
+ *
+ * ## Folded from 2026-09-10, and what that may not cost
+ *
+ * It was open always, and with the panels around it the result screen asked for
+ * more reading than the answer warranted. It now folds, matching the review
+ * panel beside it.
+ *
+ * The line it must not cross is RULES.md 7: a value that could not be confirmed
+ * is SHOWN, not buried. So the summary carries the count AND the label of every
+ * flagged value; only the explanation of each folds. A reader who opens nothing
+ * still learns that the pin numbering was checked by one reading rather than
+ * two, which is the fact the rule is about.
  *
  * Moved out of `src/app/page.tsx` on 2026-09-03 so `/suite` shows the same list.
  * Renders nothing when there is nothing to check, so a caller can drop it in
@@ -311,13 +322,19 @@ export function RecordPanel({
 export function WorthAGlance({ items }: { items: readonly Confirmation[] }) {
   if (items.length === 0) return null;
   return (
-    <section className="step">
-      <div className="step-head">
+    <details className="step reviews-fold" open={false}>
+      <summary className="step-head glance-head">
         <span className="step-eyebrow">Worth a glance</span>
         <h2 className="step-title">
           {items.length} {items.length === 1 ? "value" : "values"} nothing independent could check
         </h2>
-      </div>
+        {/* THE FLAGGED VALUES ARE NAMED IN THE SUMMARY, not only inside the
+            fold. RULES.md 7 requires that an unconfirmed value be SHOWN, and a
+            count alone does not show which ones. Folded, the reader still reads
+            "pin names and numbering, land pattern, package outline" without
+            opening anything; what folds is the reasoning behind each. */}
+        <span className="glance-names">{items.map((item) => item.label).join(" · ")}</span>
+      </summary>
       <p className="step-note">
         Everything not listed here was agreed by two separate readings of this datasheet, taken by
         different means, so it needs no checking.
@@ -336,7 +353,7 @@ export function WorthAGlance({ items }: { items: readonly Confirmation[] }) {
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   );
 }
 

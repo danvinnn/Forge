@@ -1181,10 +1181,13 @@ button:disabled {
 
 /* The reader's working notes, folded away: they are written in field paths and
    were thirty lines of internal vocabulary sitting under the export button. */
+/* A quiet fold at the foot of the record. It carried 24px of margin on top of
+   16px of padding, which read as a gap where a section had been deleted rather
+   than as a rule separating two. The border still separates them. */
 .notes-fold {
-  margin-top: 1.5rem;
+  margin-top: 0.7rem;
   border-top: 1px solid var(--rule);
-  padding-top: 1rem;
+  padding-top: 0.7rem;
 }
 
 .notes-fold > summary {
@@ -1330,6 +1333,39 @@ button:disabled {
 
 .reviews-fold > summary .badge {
   margin-left: 0;
+}
+
+/* The flagged values, named in the summary of a folded panel.
+   `.step-head` is a flex ROW that does not wrap, so this span sat beside the
+   title and squeezed it into a three-line column at heading size. It belongs on
+   its own row underneath, reading as the subtitle of the count rather than as a
+   second heading. */
+.glance-head {
+  flex-wrap: wrap;
+  position: relative;
+  padding-right: 1.25rem;
+}
+
+.glance-head .step-title {
+  flex: 1 1 auto;
+}
+
+/* Pinned to the first row. The shared rule pushes this marker with
+   `margin-left: auto`, which on a wrapping summary drops it onto the second row
+   beside the labels instead of tracking the title. */
+.glance-head::after {
+  position: absolute;
+  right: 0;
+  top: 0.15rem;
+  margin-left: 0;
+}
+
+.glance-names {
+  flex-basis: 100%;
+  margin-top: 0.15rem;
+  color: var(--ink-3);
+  font-size: 0.8125rem;
+  line-height: 1.45;
 }
 
 /* The facts now sit inside the result card, between the name and the verdict. */

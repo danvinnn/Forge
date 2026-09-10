@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
 import { POST } from "../../app/api/export/route";
-import { extractedValue, resolveForExport, unknown, type PartRecord, type PinRecord } from "../types";
+import { extractedValue, resolveForExport, unknown, type PartRecord, type PinRecord, type LeadWidth } from "../types";
 import { labelForField } from "../review";
 
 /**
@@ -80,6 +80,7 @@ function exportablePart(
         ? citedValue<"smd" | "through-hole">("smd")
         : unknown<"smd" | "through-hole">(),
       leadDiameterMm: unknown<number>(),
+      leadThicknessMm: unknown<LeadWidth>(),
       holeDiameterMm: unknown<number>(),
       vacantLeadSlot: unknown<number>(),
       leadsPerSide: unknown<string>(),

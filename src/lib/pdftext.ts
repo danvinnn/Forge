@@ -511,9 +511,18 @@ export function looksLikeWrongDocument(doc: DatasheetText): boolean {
  *     "L78 Datasheet"   L78 stands alone, and L7805 extends it        ACCEPT
  *     "DF13 Series"     DF13 stands alone                             ACCEPT
  *     "TPS7A20"         TPS7A is only a shared PREFIX, not a token    REJECT
+ *     "HS9-26CLV32RH"   HS9 is a package code, and the hyphen after   REJECT
+ *                       it is not a boundary, so it is not a token      (HS9-1840ARH)
  *
  * Measured over all 123 cached datasheets: 120 accepted, 3 rejected, and the
  * three rejected are exactly the three wrong documents. No false positives.
+ *
+ * That measurement predates the separator rule below, added 2026-09-10, and has
+ * NOT been re-run against the corpus: `.bench-cache` is empty, so re-measuring
+ * means re-fetching every document. The change only ever removes prefix-fragment
+ * matches, and the six cases that measurement distilled are asserted in
+ * `names-the-part.test.ts` and still pass, but the corpus figure is unverified
+ * against it.
  *
  * Front matter only, because a datasheet mentions other part numbers constantly
  * further in - comparison tables, application notes, ordering information.
@@ -530,12 +539,56 @@ export function namesThePart(doc: DatasheetText, partNumber: string, pages = 2):
   const alnum = (value: string) => value.replace(/[^A-Z0-9]/g, "");
   if (alnum(text).includes(alnum(key))) return true;
 
+  // A SEPARATOR INSIDE A PART NUMBER IS NOT A WORD BOUNDARY.
+  //
+  // The stems below come from the requested number with its separators
+  // stripped, so the document has to be read the same way or the two are not
+  // comparable. Leaving the document's separators in place made the rule
+  // collapse wherever a part number carries a package code before its first
+  // hyphen, which is how rad-hard numbering works.
+  //
+  // Requesting anything shaped `HS9-*` against the HS-26CLV32RH datasheet
+  // matched on the stem `HS9` alone, because the hyphen in the printed
+  // `HS9-26CLV32RH` looked like the end of a token. A line receiver's datasheet
+  // therefore answered for `HS9-1840ARH` and every other device sharing that
+  // package prefix. Collapsing the joiner makes `HS9-26CLV32RH` the one token
+  // it actually is, so the prefix no longer stands alone anywhere in the page.
+  //
+  // It also means the stem that genuinely identifies the device,
+  // `HS926CLV32RH`, can match the printed `HS9-26CLV32RH` at last. The
+  // requested part was already being accepted before this, but on the strength
+  // of its prefix rather than its identity - the same match that accepted the
+  // wrong parts.
+  //
+  // Strictly narrower for prefix fragments and correct for numbers that
+  // contain a separator, so it refuses the wrong device without refusing the
+  // family datasheets the stem rule exists to admit.
+  const joined = text.replace(/([A-Z0-9])[-._/+](?=[A-Z0-9])/g, "$1");
+
   for (let length = key.length - 1; length >= 3; length -= 1) {
     const stem = alnum(key.slice(0, length));
     if (stem.length < 3) break;
+    // A FAMILY STEM CARRIES A DIGIT. A RUN OF LETTERS IS NOT EVIDENCE.
+    //
+    // Reported 2026-09-10: typing `NOTAPART` produced a 30-page Microsoft
+    // trademark list, presented as that part's datasheet. The loop had shrunk
+    // the request to `NOT`, and "not" stands alone in very nearly every
+    // document ever written. `ANDGATE` did the same through `AND`.
+    //
+    // The families this loop exists to admit are alphanumeric - `L78` for
+    // L7805, `DF13` for DF13-4P-1.25DSA - because that is how part numbers are
+    // built. A purely alphabetic head is the other thing: a vendor prefix like
+    // `TPS` or `MAX`, which the rule already refuses to treat as an
+    // identification, or an ordinary English word, which is worse because it
+    // matches documents that are not datasheets at all.
+    //
+    // Stated without naming a part: the shortened form of a part number is
+    // only evidence when it still looks like a part number. This is deliberately
+    // not a list of words to exclude - the next word would not be on it.
+    if (!/[0-9]/.test(stem)) continue;
     // Bounded on the right so a longer part number cannot satisfy a shorter
     // request by accident, which is exactly how TPS7A20 passed for TPS7A4700.
-    if (new RegExp(`(?:^|[^A-Z0-9])${stem}(?![A-Z0-9])`).test(text)) return true;
+    if (new RegExp(`(?:^|[^A-Z0-9])${stem}(?![A-Z0-9])`).test(joined)) return true;
   }
   return false;
 }

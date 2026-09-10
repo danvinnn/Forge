@@ -387,6 +387,33 @@ export const packageDimensionsSchema = z.object({
     citation: null
   }),
   /**
+   * The SECOND dimension of a rectangular through-hole lead, in millimetres.
+   *
+   * ## Why a diameter was not enough
+   *
+   * A stamped through-hole pin is not round. A DIP drawing dimensions it twice
+   * and calls neither a diameter: `b`, the width seen from above, and `C`, the
+   * thickness. `leadWidthMm` already carries `b`. This carries `C`, so the pair
+   * describes the cross-section the hole actually has to pass.
+   *
+   * Reported 2026-09-10 against an AT17LV256-10PU. Its PDIP read cleanly -
+   * mounting, rows, pitch, row spacing and body all correct - and refused for
+   * `leadDiameterMm` alone, a number that drawing does not print and never
+   * will. The hand-read dimension oracle records `leadDiameterMm` ZERO times
+   * across every entry it holds, a PDIP-8 and a TO-220 among them, which is the
+   * measure of how wide that gap was: every DIP, SIP and TO-220 refused on the
+   * one input its datasheet structurally cannot supply.
+   *
+   * Same min/max shape as `leadWidthMm`, because that is how a drawing prints
+   * it, and defaulted for the same backward-compatibility reason.
+   */
+  leadThicknessMm: extracted(leadWidthSchema).default({
+    value: null,
+    confidence: null,
+    method: null,
+    citation: null
+  }),
+  /**
    * The PLATED HOLE the datasheet recommends, where it prints one.
    *
    * Added 2026-09-02. IPC-7251 sizes a hole as lead diameter plus an allowance,
@@ -567,16 +594,33 @@ export const partSchema = z.object({
     citation: null
   }),
   /**
-   * The JEDEC outline registration the drawing cites, e.g. `MO-153 AA`.
+   * The standard outline registration cited for the package, e.g. `MO-153 AA`
+   * for JEDEC or `CDFP4-F16` for MIL-STD-1835.
    *
    * Distinct from `packageOutlineCode`, which is the VENDOR's own code
-   * (`PW0008A`, `DW0016B`) and means nothing outside that vendor. The JEDEC
+   * (`PW0008A`, `DW0016B`) and means nothing outside that vendor. A standard
    * registration is the industry-wide identity of the package, printed on 21 of
    * 46 corpus drawings as "Reference JEDEC registration MO-153, variation AA".
    *
    * Recorded because it is the canonical answer to "which package is this",
    * which a hand-typed family table was previously guessing at from the
    * designator text.
+   *
+   * ## Why the name says JEDEC and the field does not, 2026-09-10
+   *
+   * Hermetic military and rad-hard packages are registered under MIL-STD-1835,
+   * not JEDEC, and those are the parts where this field earns the most: their
+   * datasheets routinely print the registration and NO dimensioned outline, so
+   * the code is the only route to a body size. An HS9-26CLV32RH-Q read returned
+   * every dimension null while page 2 printed `MIL-STD-1835: CDFP4-F16`, and
+   * Forge went on to ask the user to type a body length the named drawing
+   * already defines.
+   *
+   * Both registries answer the same question and nothing downstream parses the
+   * format, so they share this field rather than getting one each. The name is
+   * kept because renaming it would migrate the record schema and every stored
+   * record to no functional end; read it as "standard outline", with JEDEC the
+   * commercial case.
    */
   jedecOutline: extracted(z.string().min(1)).default({
     value: null,
@@ -808,6 +852,7 @@ export type PackageDimensions = {
   mounting: Extracted<"smd" | "through-hole">;
   /** Lead diameter for a through-hole part, mm. IPC-7251 sizes the hole from it. */
   leadDiameterMm: Extracted<number>;
+  leadThicknessMm: Extracted<LeadWidth>;
   /** The plated hole this datasheet recommends, mm. Preferred over the IPC computation. */
   holeDiameterMm: Extracted<number>;
   /** Grid position on the shorter row that carries no lead, 1-based from pin 1. */
@@ -1031,6 +1076,7 @@ export interface ResolvedPart {
     leadForm: "gullwing" | "nolead" | "straight" | null;
     mounting: "smd" | "through-hole" | null;
     leadDiameterMm: number | null;
+    leadThicknessMm: LeadWidth | null;
     holeDiameterMm: number | null;
     vacantLeadSlot: number | null;
     leadsPerSide: string | null;
@@ -1190,6 +1236,14 @@ export function resolveForExport(part: PartRecord, options: ResolveOptions = {})
         leadForm: part.dimensions.leadForm.value,
         mounting: part.dimensions.mounting.value,
         leadDiameterMm: part.dimensions.leadDiameterMm.value,
+        // OPTIONAL AT THE READ, not just defaulted at the parse.
+        //
+        // `.default()` fills this in for a record that came through the schema,
+        // which covers anything persisted. It does NOT cover a record built as
+        // an object literal in memory, and those predate the field by every
+        // fixture in the suite. A record without the key has not read a lead
+        // thickness, which is null - the same thing the default says.
+        leadThicknessMm: part.dimensions.leadThicknessMm?.value ?? null,
         holeDiameterMm: part.dimensions.holeDiameterMm.value,
         vacantLeadSlot: part.dimensions.vacantLeadSlot.value,
         leadsPerSide: part.dimensions.leadsPerSide.value,

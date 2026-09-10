@@ -145,21 +145,6 @@
   text-wrap: pretty;
 }
 
-/* The heat rule, on the wordmark in the bar. It used to be here AND on a second
-   "Forge" sitting as an eyebrow over the hero heading, which is a label above a
-   heading that already carries its own weight. */
-.suite-bar .wordmark {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.suite-heat {
-  width: 22px;
-  height: 2px;
-  background: linear-gradient(90deg, var(--rule-strong), var(--ember), var(--ember-hot));
-}
-
 /* --- the frame -------------------------------------------------------------
    One element for the whole session. Everything after the composer is its body,
    and each phase replaces the last inside it. */
@@ -331,6 +316,17 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* The way out of a failed lookup. Same column as the package chooser, but the
+   upload control sizes to its label: stretched across the frame it read as an
+   empty text field waiting to be filled in, which is the opposite of what it
+   does. */
+.frame-recover {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.7rem;
 }
 
 /* The package list comes from `globals.css`, so the selected card kept the blue
@@ -817,8 +813,11 @@
   color: var(--ink-3);
 }
 
+/* No extra margin. `.frame-body` already spaces every section by 0.9rem, and
+   this one added 1.2rem on top of that, so the CAD-limits panel sat in a band
+   more than twice as wide as the gap above and below any of its neighbours. */
 .glance {
-  margin-top: 1.2rem;
+  margin-top: 0;
 }
 
 .glance-list {
@@ -1459,4 +1458,32 @@
    steps, which the `.onboard-line` class alone did not. */
 .onboard:has(.assembly) {
   max-width: 680px;
+}
+
+/* The vendor-artifact fold. Its summary sits under the footprint drawing, so it
+   reads as one more control in that section rather than a new panel.
+   The markers are written as CHARACTERS, not CSS escapes: a "b8" escape went
+   through a layer that ate the backslash and shipped a control code reading
+   "b8" beside the label. */
+.vendor-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.35rem 0;
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+}
+
+.vendor-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.vendor-fold > summary::before {
+  content: "▸";
+  margin-right: 0.4rem;
+  color: var(--ink-3);
+  font-size: 0.7rem;
+}
+
+.vendor-fold[open] > summary::before {
+  content: "▾";
 }

@@ -115,6 +115,7 @@ function soic8(): ResolvedPart {
       leadForm: "gullwing",
       mounting: null,
       leadDiameterMm: null,
+      leadThicknessMm: null,
       holeDiameterMm: null,
       vacantLeadSlot: null,
       leadsPerSide: null,

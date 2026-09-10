@@ -11,7 +11,7 @@ const part = {
   packageOutlineCode: null, jedecOutline: null, vendorLandPattern: null, exposedPad: false, pinCount: 4, pins,
   dimensions: {
     bodyLengthMm: 4, bodyWidthMm: 3, bodyHeightMm: 1, pitchMm: 1, leadLengthMm: null, leadCount: 4,
-    leadSides: 2, leadForm: "nolead", mounting: "smd", leadDiameterMm: null, holeDiameterMm: null,
+    leadSides: 2, leadForm: "nolead", mounting: "smd", leadDiameterMm: null, leadThicknessMm: null, holeDiameterMm: null,
     leadWidthMm: null, leadSpanMm: null, leadSpanCrossMm: null, leadContactMm: null,
     thermalPadLengthMm: null, thermalPadWidthMm: null, landPadLengthMm: null, landPadWidthMm: null,
     landSpanMm: null, landSpanCrossMm: null, vacantLeadSlot: null, leadsPerSide: null,

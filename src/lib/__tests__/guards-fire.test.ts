@@ -30,6 +30,7 @@ function soic8(): ResolvedPart {
       bodyLengthMm: 4.9, bodyWidthMm: 3.9, bodyHeightMm: 1.5, pitchMm: 1.27,
       leadLengthMm: 0.6, leadCount: 8,
       leadWidthMm: { minMm: 0.31, maxMm: 0.51 },
+      leadThicknessMm: null,
       leadSpanMm: { minMm: 5.8, maxMm: 6.2 },
       leadSpanCrossMm: null,
       leadContactMm: { minMm: 0.4, maxMm: 0.625 },

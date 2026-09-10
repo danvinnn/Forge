@@ -52,7 +52,7 @@ import type { ConfidenceCheck } from "../../lib/confidence";
 import type { RenderedPage } from "../../lib/pagerender";
 import type { Confirmation } from "../../lib/confirm";
 import type { AccountDraft } from "./AccountForm";
-import { clock, progressAt, stagesFor } from "../../lib/readprogress";
+import { clock, progressAt, searchLine, stagesFor } from "../../lib/readprogress";
 import type { Intent } from "../../lib/intent";
 import type { ForgeSettings } from "../../lib/settings";
 import type { ExportFormat, PartRecord } from "../../lib/types";
@@ -337,6 +337,10 @@ export default function SuiteWorkspace() {
   const [vendorStep, setVendorStep] = useState<File | null>(null);
   const [officialResources, setOfficialResources] = useState<OfficialResource[]>([]);
   const [officialImportChoices, setOfficialImportChoices] = useState<OfficialImportChoice[]>([]);
+  // The part a lookup is running for, and when it started. Null when no search
+  // is in flight, which is what makes `searchLine` show only while it should.
+  const [searching, setSearching] = useState<{ part: string; since: number } | null>(null);
+  const [searchElapsedMs, setSearchElapsedMs] = useState(0);
   const [discoveringOfficial, setDiscoveringOfficial] = useState(false);
   const [importingOfficial, setImportingOfficial] = useState(false);
   const attemptedOfficialImports = useRef(new Set<string>());
@@ -486,6 +490,7 @@ export default function SuiteWorkspace() {
     const partNumber = prompt.trim();
     if (!partNumber) return;
     setBusy(true);
+    setSearching({ part: partNumber, since: Date.now() });
     setStatus(`Finding ${partNumber}…`);
     try {
       const response = await fetch("/api/identify", {
@@ -494,7 +499,25 @@ export default function SuiteWorkspace() {
         body: JSON.stringify({ partNumber })
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Could not identify this part.");
+      if (!response.ok) {
+        // NOT FOUND IS SAID ONCE, BY THE PANEL, NOT TWICE.
+        //
+        // The panel below this line already reads "No datasheet found. Retry
+        // below, or upload the PDF.", so echoing the route's own sentence here
+        // put the same fact on screen twice, an inch apart, one of them naming
+        // a part number the composer is already showing.
+        //
+        // Every OTHER failure keeps its message, because each says something
+        // the panel does not: a transport failure that is worth retrying, a
+        // document that was found but is for another part, lookup disabled in
+        // air-gapped mode, a rate limit. Those are different actions, and
+        // silencing them would leave the panel's generic line standing in for
+        // all of them.
+        setIdentified(null);
+        setPhase("identified");
+        setStatus(payload.code === "DATASHEET_NOT_FOUND" ? "" : payload.error || "Could not identify this part.");
+        return;
+      }
       setDiscoveringOfficial(Boolean(payload.partNumber && payload.manufacturer));
       setIdentified(payload as Identified);
       setChosenPackage(null);
@@ -503,11 +526,16 @@ export default function SuiteWorkspace() {
     } catch (error) {
       // Keep the typed part and the PDF-upload escape hatch. The full lookup
       // remains available from this state in case a transient identification
-      // request, rather than the document itself, failed.
+      // request, rather than the document itself, failed. This is now reached
+      // only by a thrown request or a body that would not parse, never by a
+      // route answering with an error the block above already handled.
       setIdentified(null);
       setPhase("identified");
       setStatus(error instanceof Error ? error.message : "Could not identify this part.");
     } finally {
+      // Cleared on EVERY exit, including the early return above, so a finished
+      // search can never leave a line claiming it is still looking.
+      setSearching(null);
       setBusy(false);
     }
   }, [prompt]);
@@ -658,13 +686,32 @@ export default function SuiteWorkspace() {
   /**
    * THE READ. Ninety seconds and one model call, begun on purpose.
    *
-   * This shares the read contract with the original workspace. `intent` decides the
-   * field set and the pages to render, and `packageType`, which is already
-   * supported and must be sent BEFORE the read rather than after - every pin
+   * `packageType` is sent BEFORE the read rather than after, because every pin
    * reader takes the package as an argument.
+   *
+   * ## `intent` does NOT aim the read, and this used to say it did
+   *
+   * It reads "`intent` decides the field set and the pages to render" until
+   * 2026-09-10, and neither route has ever looked at it: `lookupSchema` does not
+   * declare it so zod strips it, `/api/parse` never reads the form field, and
+   * `runExtraction` takes no field set at all. The read is aimed by
+   * `unresolvedFields`, the GAPS in the record, so "Read for CAD" and "Read for
+   * both" ask for the same thing and cost the same.
+   *
+   * So it is no longer sent. What `intent` does do is all client-side and real:
+   * it routes SPICE to `/api/model` instead of here, decides whether a package
+   * must be chosen, picks the progress stages, and narrows which official
+   * manufacturer artifacts are worth recovering. Wiring it into the read would
+   * mean changing the prompt, which is not free, and nothing has measured that
+   * a narrower ask reads better.
    */
   const runRead = useCallback(async () => {
-    if (!file && !prompt.trim()) return;
+    // A BACKSTOP, not the control. Both callers already guarantee this: the
+    // primary button sends a retry to `identifyPrompt` instead, and the
+    // re-read link requires a file. It is here because the cost of getting it
+    // wrong is the reading screen asserting that a datasheet is being parsed
+    // when none was ever found.
+    if (!file && !identified) return;
     setPhase("reading");
     setBusy(true);
     setElapsedMs(0);
@@ -731,7 +778,6 @@ export default function SuiteWorkspace() {
       if (file) {
         const body = new FormData();
         body.append("file", file);
-        body.append("intent", intent);
         if (needsPackage && chosenPackage) body.append("packageType", chosenPackage);
         body.append("settings", JSON.stringify(settings));
         const response = await fetch("/api/parse", { method: "POST", body });
@@ -743,7 +789,6 @@ export default function SuiteWorkspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             partNumber: prompt.trim(),
-            intent,
             ...(needsPackage && chosenPackage ? { packageType: chosenPackage } : {}),
             settings
           })
@@ -1178,6 +1223,23 @@ export default function SuiteWorkspace() {
   // request, worth up to 45 seconds, and the bar described the model pipeline
   // only until 2026-09-04 - so a lookup showed "whole document to the model"
   // during a fetch that had no document yet.
+  // Ticks only while a search is in flight, and the interval is torn down with
+  // it, so an idle screen holds no timer.
+  useEffect(() => {
+    if (!searching) {
+      setSearchElapsedMs(0);
+      return;
+    }
+    setSearchElapsedMs(0);
+    const id = window.setInterval(() => setSearchElapsedMs(Date.now() - searching.since), 500);
+    return () => window.clearInterval(id);
+  }, [searching]);
+
+  // What the status row actually prints. A live search outranks whatever the
+  // last one left behind, so a retry never shows the previous failure's text
+  // while it is running.
+  const statusLine = searching ? searchLine(searchElapsedMs, searching.part) : status;
+
   const stages = useMemo(() => stagesFor(intent, { retrieving: !file }), [intent, file]);
   const progress = useMemo(
     () => progressAt(elapsedMs, stages, phase === "done"),
@@ -1348,11 +1410,8 @@ export default function SuiteWorkspace() {
   return (
     <div className={`suite suite-${phase}`}>
       <header className="suite-bar">
-        {/* The one wordmark. It carried the heat rule twice: here, and again as
-            an eyebrow over the hero heading two inches below. */}
-        <span className="wordmark">
-          Forge<i className="suite-heat" aria-hidden="true" />
-        </span>
+        {/* The one wordmark. */}
+        <span className="wordmark">Forge</span>
         {/* WHO IS SIGNED IN, BESIDE THE GEAR THAT CHANGES IT. A settings icon
             with nothing next to it makes the user open the panel to find out
             whether the first run ever completed. */}
@@ -1421,9 +1480,14 @@ export default function SuiteWorkspace() {
               <input
                 className="frame-input"
                 value={prompt}
-                // The heading above says where a PDF goes. The placeholder used
-                // to repeat it word for word, one line apart.
-                placeholder="LMP7704-SP"
+                // The heading above says where a PDF goes, so the placeholder
+                // does not repeat it word for word one line apart. It carries an
+                // example instead, marked AS an example: a bare part number
+                // reads as a value already filled in, or as a string that must
+                // be matched. The part number is the example worth showing
+                // because identification wants the full MPN with its suffix,
+                // not "op amp".
+                placeholder="e.g. LMP7704-SP"
                 onChange={(event) => setPrompt(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && prompt.trim()) void identifyPrompt();
@@ -1459,7 +1523,15 @@ export default function SuiteWorkspace() {
               </button>
             ))}
             <span className="frame-actions">
-              {phase !== "empty" && <span className="frame-status">{status}</span>}
+              {/* SHOWN IN EVERY PHASE, INCLUDING `empty`, because that is the one
+                  where the wait happens with nothing else on screen. Both
+                  identify paths set this to "Finding X…" before they start, and
+                  gating it to `phase !== "empty"` meant a lookup ran for as long
+                  as the network took behind a screen that had not visibly
+                  changed: the click looked like it had missed, and the honest
+                  response was to press it again. `status` is "" until something
+                  sets it, so the first paint is unaffected. */}
+              {statusLine && <span className="frame-status">{statusLine}</span>}
               {phase === "empty" && (
                 <>
                   <input
@@ -1497,7 +1569,55 @@ export default function SuiteWorkspace() {
                   on this screen, two inches apart, and the two remaining rows
                   were a count of the list directly below and eight characters
                   of a hash nothing on the screen used. */}
-              {needsPackage ? (
+              {/* NOTHING WAS IDENTIFIED, so there is no package list to show and
+                  no datasheet to read. Rendering the chooser here printed an
+                  empty "Package" heading, which reads as "identified, and it has
+                  no packages" rather than "never identified". Reported
+                  2026-09-10 against a rad-hard part: the screen looked like the
+                  lookup had failed and the button next to it still said it would
+                  read a datasheet. */}
+              {!identified && !file ? (
+                <div className="frame-recover">
+                  {/* SHORT, because the status line directly above already names
+                      the part and says it was not found. This says only what to
+                      do about it. */}
+                  <p className="frame-note">No datasheet found. Retry below, or upload the PDF.</p>
+                  {/* THE UPLOAD HATCH BELONGS HERE, not only on the empty screen.
+                      Retrieval not finding a public PDF is the normal case for
+                      controlled and military parts, and until 2026-09-10 the only
+                      datasheet picker lived in the `empty` phase: the way out of a
+                      failed lookup was "Start another part", which throws away
+                      what the user typed. `identifyPrompt` claimed to keep this
+                      hatch open and did not. */}
+                  <label className="btn" htmlFor="suite-file-direct">
+                    Upload the datasheet PDF instead
+                  </label>
+                  <input
+                    id="suite-file-direct"
+                    type="file"
+                    accept="application/pdf"
+                    className="visually-hidden"
+                    onChange={(event) => {
+                      const chosen = event.target.files?.[0] ?? null;
+                      event.target.value = "";
+                      onPick(chosen);
+                    }}
+                  />
+                </div>
+              ) : needsPackage && (identified?.packages.length ?? 0) === 0 ? (
+                // IDENTIFIED, BUT THE DOCUMENT NAMED NO PACKAGE.
+                //
+                // The chooser rendered its heading over an empty list, which
+                // reads as a chooser still loading rather than as "there is
+                // nothing here to choose". Seen 2026-09-10 alongside the
+                // `NOTAPART` retrieval, and it outlives that: a real datasheet
+                // with no ordering table reaches this state honestly, and the
+                // read can still find the package on the drawing.
+                <p className="frame-note">
+                  No ordering table in this document, so there is no package to choose. The read will
+                  take the package from the drawing.
+                </p>
+              ) : needsPackage ? (
                 <div className="pick-package">
                   <h2 className="frame-label">Package</h2>
                   <ul className="packages">
@@ -1530,15 +1650,42 @@ export default function SuiteWorkspace() {
                   type="button"
                   className="btn btn-primary btn-lg"
                   disabled={busy || discoveringOfficial || importingOfficial || automaticImportsWaiting.length > 0 || (needsPackage && (identified?.packages.length ?? 0) > 0 && !chosenPackage)}
-                  onClick={() => void runRead()}
+                  // RETRYING A SEARCH IS NOT A READ, so it does not open the
+                  // reading screen. That screen shows a four-stage progress list
+                  // and a driven bar, which together assert that a document is in
+                  // hand and being parsed. Sending a retry through `runRead`
+                  // showed all of it while retrieval was still looking, and showed
+                  // it again on the way back out when nothing was found.
+                  //
+                  // `identifyPrompt` is the same free retrieval the first attempt
+                  // made. It ends in one of two honest places: this panel again,
+                  // or an identified part with its packages, from which the read
+                  // is then started deliberately.
+                  onClick={() => void (!identified && !file ? identifyPrompt() : runRead())}
                 >
                   {/* The CAD label gets MORE specific once a package is
                       chosen. The SPICE one got less: "Read for SPICE" before a
                       file was chosen became "Read for the model" after it. */}
-                  {needsPackage ? (chosenPackage ? `Read for ${chosenPackage}` : "Read this datasheet") : "Read for the SPICE model"}
+                  {/* "Read this datasheet" is a claim, and after a failed
+                      identification it is a false one: the read has to FIND a
+                      document before it can read anything, which is the first
+                      stage the progress list already names. */}
+                  {!identified && !file
+                    ? "Retry the search"
+                    : needsPackage
+                      ? (chosenPackage ? `Read for ${chosenPackage}` : "Read this datasheet")
+                      : "Read for the SPICE model"}
                 </button>
                 <span className="frame-note">
-                  {discoveringOfficial || importingOfficial ? "Checking official manufacturer artifacts before the read…" : intentNote(intent)}
+                  {discoveringOfficial || importingOfficial
+                    ? "Checking official manufacturer artifacts before the read…"
+                    : // The read's cost and target, which a retry has neither of:
+                      // it searches, and stops. Printing "About 90 seconds" beside
+                      // it described work that does not start until a document is
+                      // found.
+                      !identified && !file
+                      ? ""
+                      : intentNote(intent)}
                 </span>
               </div>
             </div>
@@ -1614,7 +1761,15 @@ export default function SuiteWorkspace() {
                   shown={shown}
                   pins={shown.pins}
                   verdict={verdict}
-                  previewGeometry={geometry}
+                  // DRAWN ONCE, and not here. `VerdictCard` renders the
+                  // geometry itself when given it, which on `/` is the only
+                  // place it appears. This screen has its own Footprint section
+                  // with the drawing, its heading and the controls that act on
+                  // it, so passing it here put the same picture on screen twice.
+                  // Reported 2026-09-10 against LTC6563. `/` is unaffected: it
+                  // still passes its geometry and still draws it under the
+                  // verdict.
+                  previewGeometry={null}
                   activePackage={activePackage}
                   sourceUrl={evidenceUrl(part.sourceUrl ?? identified?.sourceUrl)}
                   checks={checks}
@@ -1634,6 +1789,16 @@ export default function SuiteWorkspace() {
                     ) : (
                       <p className="frame-note">No geometry was produced for {chosenPackage ?? "this package"}.</p>
                     )}
+                    {/* THE MANUFACTURER'S OWN FILES, FOLDED.
+                        Not decoration and not dead: this is the vendor-artifact
+                        leg of RULES.md's recovery order, where an official
+                        footprint or STEP is evidence Forge validates and emits
+                        instead of its own geometry. It is also the exception
+                        rather than the run, and open it was two buttons, two
+                        filenames and two paragraphs of explanation standing
+                        permanently under a footprint that was usually fine. */}
+                    <details className="reviews-fold vendor-fold">
+                      <summary>Use the manufacturer's own footprint or 3D model</summary>
                     <div className="vendor-model-controls cad-import-controls">
                       <label className="btn" htmlFor="vendor-cad-file">Use vendor footprint</label>
                       <input
@@ -1669,6 +1834,7 @@ export default function SuiteWorkspace() {
                       <span className="vendor-file">{vendorStep?.name ?? "No vendor 3D model selected"}</span>
                     </div>
                     <p className="frame-note">Optional. Forge preserves a complete manufacturer STEP model and links or embeds it in the selected CAD format.</p>
+                    </details>
                     {officialResources.some((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "package-drawing") && (
                       <ul className="resource-links" aria-label="Official CAD resources found automatically">
                         {officialResources.filter((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "package-drawing").map((resource) => (
@@ -2091,7 +2257,11 @@ export default function SuiteWorkspace() {
 
               {showCad && cadLimitations.length > 0 && (
                 <section className="step glance">
-                  <h2>Known CAD limits</h2>
+                  {/* `.step-title` like every other section heading. Bare, this
+                      took the browser default: half again the size of the
+                      headings around it, with 19px of margin above and below
+                      that no other section has. */}
+                  <h2 className="step-title">Known CAD limits</h2>
                   <ul className="glance-list">
                     {cadLimitations.map((item) => (
                       <li key={item.id}>

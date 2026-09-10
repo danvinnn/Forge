@@ -13,7 +13,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { clock, progressAt, stagesFor } from "../readprogress";
+import { clock, progressAt, searchLine, stagesFor } from "../readprogress";
 import type { Intent } from "../intent";
 
 const INTENTS: Intent[] = ["cad", "spice", "both"];
@@ -218,5 +218,41 @@ test("the retrieval stage closes on the clock, and the last one still does not",
   assert.ok(progressAt(20_000, stages, false).index > 0, "the fetch must not hold the bar forever");
   for (const ms of [200_000, 600_000]) {
     assert.equal(progressAt(ms, stages, false).index, stages.length - 1, `moved past the last stage at ${ms}ms`);
+  }
+});
+
+// THE SEARCH LINE ROTATES SO A THIRTY-SECOND LOOKUP DOES NOT READ AS A HANG.
+//
+// Asked for 2026-09-10: one frozen "Finding X…" for the length of a miss looks
+// like the click did nothing. What is asserted here is that it MOVES, that it
+// moves in the order the resolver chain actually runs, and that it never says
+// anything about the outcome.
+test("the search line advances through the chain and then holds", () => {
+  const first = searchLine(0, "HS9-26CLV32RH-Q");
+  const manufacturer = searchLine(5000, "HS9-26CLV32RH-Q");
+  const wider = searchLine(12000, "HS9-26CLV32RH-Q");
+  const tail = searchLine(25000, "HS9-26CLV32RH-Q");
+
+  assert.match(first, /Finding HS9-26CLV32RH-Q/, "opens by naming what it is looking for");
+  assert.notEqual(manufacturer, first, "it moves");
+  assert.notEqual(wider, manufacturer, "and moves again");
+  assert.notEqual(tail, wider, "and again");
+
+  // `buildCommercialResolver` is composite(manufacturer, scrape): vendor URLs
+  // first, the search fallback second. The lines follow that, so the second one
+  // is the next thing that happens rather than a synonym for the first.
+  assert.match(manufacturer, /manufacturer/i, "stage one is the vendor patterns");
+  assert.match(wider, /searching more widely/i, "stage two is the fallback");
+
+  // Held, not looped. A list that cycles keeps animating past the point where
+  // the honest thing to say is that this is taking a while.
+  assert.equal(searchLine(45000, "HS9-26CLV32RH-Q"), tail, "the last line holds");
+  assert.equal(searchLine(600000, "HS9-26CLV32RH-Q"), tail);
+});
+
+test("the search line never claims an outcome", () => {
+  for (const ms of [0, 4000, 10000, 20000, 60000]) {
+    const line = searchLine(ms, "LMP7704-SP");
+    assert.doesNotMatch(line, /\bfound\b|\bgot\b|\bretrieved\b/i, `"${line}" asserts a result it does not have`);
   }
 });

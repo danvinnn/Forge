@@ -152,8 +152,8 @@ and this note goes away.
 - **The named standard prints only while its row is blank.** That is the whole
   window in which "blank means IPC-7351B, nominal density level B" decides
   anything; it used to print under a row that had been set to C.
-- **The `Forge` eyebrow over the hero heading is gone**, and the heat rule moved
-  to the wordmark in the bar. One wordmark, one heat rule.
+- **The `Forge` eyebrow over the hero heading is gone.** One wordmark, in the
+  bar, and no heat rule on it: the heat bar beside it was removed 2026-09-10.
 - **`.pkg-active` was still blue** inside a shell whose accent is the ember, so
   the selected package card and the chip beside it disagreed about which colour
   means "picked". Overridden under `.suite`, in `suite.css`.

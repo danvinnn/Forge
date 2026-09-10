@@ -1457,6 +1457,26 @@ const MAX_LEAD_WIDTH_FRACTION_OF_PITCH = 0.75;
  * reference `DIP-8_W7.62mm` follows, and it is the only pin-1 mark that survives
  * on an assembled board where the silkscreen is under the part.
  */
+/**
+ * The diagonal of a rectangular through-hole lead, in millimetres.
+ *
+ * IPC-7251 sizes a plated hole from the lead's maximum cross-section. A round
+ * lead states that directly; a stamped one states two sides of it, `b` and `C`,
+ * and the cross-section is the diagonal they describe.
+ *
+ * Both maxima are used, because a hole sized on a typical lead is a hole some
+ * of the parts in the reel will not enter. Null unless BOTH were read: one side
+ * of a rectangle is not a cross-section, and guessing the other is the
+ * invention this derivation exists to avoid.
+ */
+function rectangularLeadDiameterMm(part: ResolvedPart): number | null {
+  const width = part.dimensions.leadWidthMm;
+  const thickness = part.dimensions.leadThicknessMm;
+  if (!width || !thickness) return null;
+  if (!(width.maxMm > 0) || !(thickness.maxMm > 0)) return null;
+  return Math.hypot(width.maxMm, thickness.maxMm);
+}
+
 function throughHoleFootprint(part: ResolvedPart, densityLevel: DensityLevel): FootprintGeometry {
   // HOW MANY ROWS OF PINS, read rather than assumed.
   //
@@ -1500,7 +1520,30 @@ function throughHoleFootprint(part: ResolvedPart, densityLevel: DensityLevel): F
     ]);
   }
 
-  const lead = part.dimensions.leadDiameterMm;
+  // A STAMPED LEAD HAS NO DIAMETER, AND ITS DRAWING NEVER PRINTS ONE.
+  //
+  // This path took `leadDiameterMm` and nothing else, so every package whose
+  // pins are flat rather than round refused for a number its datasheet cannot
+  // state. An AT17LV256-10PU read on 2026-09-10 is the worked example: mounting,
+  // rows, pitch, row spacing and body all read correctly off the PDIP drawing,
+  // and the footprint refused on the one input that drawing does not carry. The
+  // hand-read dimension oracle records `leadDiameterMm` ZERO times across every
+  // entry it holds, a PDIP-8 and a TO-220 among them, which is how wide this
+  // was: DIP, SIP and TO-220 could not produce copper at all.
+  //
+  // What the drawing DOES give is the cross-section, in two lettered dimensions:
+  // `b` the width, already read into `leadWidthMm`, and `C` the thickness, now
+  // read into `leadThicknessMm`. IPC-7251 sizes a hole from the MAXIMUM lead
+  // cross-section, which for a rectangular pin is its diagonal, so the pair
+  // yields the figure the standard asks for.
+  //
+  // This is a DERIVATION with a source, not a substitute for a reading: the
+  // maxima are the document's own numbers and the rule is the standard's. The
+  // same reasoning already sits on `holeDiameterMm`, which notes that a square
+  // post needs a hole sized on its diagonal. A round lead still uses its own
+  // diameter, and a part with neither still asks.
+  const rectangularLead = rectangularLeadDiameterMm(part);
+  const lead = part.dimensions.leadDiameterMm ?? rectangularLead;
   const pitchMm = part.dimensions.pitchMm;
   const rowSpacingMm = part.dimensions.landSpanMm ?? part.dimensions.leadSpanMm?.minMm ?? null;
 
@@ -1531,7 +1574,16 @@ function throughHoleFootprint(part: ResolvedPart, densityLevel: DensityLevel): F
   // TE's 282836-2 prints a 1.1 mm hole, states no lead diameter anywhere, and
   // was refused for the one input it did not need.
   if (lead === null && printedHoleMm === null) {
-    needs.push({ field: "leadDiameterMm", label: "Lead diameter", why, unit: "mm", scope: "part" });
+    // Reached only when the drawing gave neither a round lead's diameter nor
+    // both sides of a flat one, so the question names the round case it can
+    // actually take as an answer rather than implying the pair is unusable.
+    needs.push({
+      field: "leadDiameterMm",
+      label: "Lead diameter, or the larger side of a flat lead",
+      why,
+      unit: "mm",
+      scope: "part"
+    });
   }
   // A SINGLE ROW HAS NO ROW SPACING. Asking for it would be a question the
   // package cannot answer, which is the defect shape this codebase keeps

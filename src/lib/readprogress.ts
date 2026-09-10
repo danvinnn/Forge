@@ -235,3 +235,38 @@ export function clock(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
+
+/**
+ * What the search says about itself while it runs.
+ *
+ * A lookup takes about four seconds when a manufacturer pattern claims the part
+ * and about thirty when nothing does, and one frozen line for thirty seconds
+ * reads as a hang. These rotate so the wait looks like work, which it is.
+ *
+ * THE LINES FOLLOW THE REAL CHAIN, in its real order.
+ * `buildCommercialResolver` is `composite(manufacturer, scrape)`: constructed
+ * vendor URLs first, then a search-and-scrape last resort. So the second line
+ * is not a synonym for the first, it is the next thing that actually happens.
+ *
+ * The BOUNDARIES are estimates from the clock, not events: retrieval does not
+ * stream its stage changes, so on a fast hit the later lines never show and on
+ * a slow manufacturer fetch line three can appear while resolver one is still
+ * going. That is the same bargain `stagesFor` already makes for the read, and
+ * it becomes exact the day retrieval reports its boundaries. What is never
+ * estimated is the outcome: nothing here claims to have found anything.
+ *
+ * The last line HOLDS rather than cycling back. Looping the list would keep
+ * animating past the point where the honest thing to say is that it is taking
+ * a while.
+ */
+const SEARCH_LINES: { after: number; line: (part: string) => string }[] = [
+  { after: 0, line: (part) => `Finding ${part}…` },
+  { after: 3500, line: () => "Checking manufacturer sites…" },
+  { after: 9000, line: () => "No vendor pattern matched. Searching more widely…" },
+  { after: 18000, line: (part) => `Still looking for ${part}…` }
+];
+
+export function searchLine(elapsedMs: number, part: string): string {
+  const step = SEARCH_LINES.filter((entry) => elapsedMs >= entry.after).pop() ?? SEARCH_LINES[0];
+  return step.line(part);
+}
