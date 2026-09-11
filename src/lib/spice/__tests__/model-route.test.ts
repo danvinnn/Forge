@@ -120,7 +120,6 @@ test("a document that states nothing is refused WITH what was read", async () =>
 
 test("a vendor subcircuit rescues a datasheet Forge cannot model without inventing behaviour", async () => {
   const body = new FormData();
-  body.append("file", new File([new Uint8Array([1, 2, 3, 4]) as BlobPart], "datasheet.pdf", { type: "application/pdf" }));
   body.append("vendorModel", new File([
     ".subckt THEIR_SENSOR EXC+ OUT EXC-\nR1 EXC+ OUT 1k\n.ends THEIR_SENSOR\n"
   ], "vendor-sensor.lib", { type: "text/plain" }));
@@ -290,7 +289,7 @@ test(
 );
 
 test(
-  "a supplied vendor model is checked but never redistributed",
+  "a supplied vendor model is structurally adapted before behavioural generation and never redistributed",
   { skip: fs.existsSync(OPA333) ? false : "no cached datasheet" },
   async () => {
     const body = new FormData();
@@ -314,13 +313,13 @@ test(
     const JSZip = (await import("jszip")).default;
     const zip = await JSZip.loadAsync(Buffer.from(payload.zipBase64, "base64"));
     const names = Object.keys(zip.files);
-    assert.ok(names.includes("OPA333-vendor-conformance.txt"));
+    assert.ok(names.includes("OPA333-vendor-structural.txt"));
     assert.equal(names.some((name) => /vendor\.lib$/i.test(name)), false, "the vendor's copyrighted file must not be redistributed");
   }
 );
 
 test(
-  "a generated result asks which canonical vendor subcircuit is the part instead of picking a helper",
+  "a vendor file asks which declaration is the part instead of interpreting helpers",
   { skip: fs.existsSync(OPA333) ? false : "no cached datasheet" },
   async () => {
     const body = new FormData();
@@ -332,20 +331,19 @@ test(
     body.append("partNumber", "OPA333");
     body.append("response", "json");
     let response = await POST(new Request("http://localhost/api/model", { method: "POST", body }));
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 422);
     const choose = await response.json() as {
-      vendorVerification: { status: string; error: string };
       vendorCandidates: Array<{ id: string; name: string }>;
     };
-    assert.equal(choose.vendorVerification.status, "refused");
     assert.equal(choose.vendorCandidates.length, 2);
     const part = choose.vendorCandidates.find((candidate) => candidate.name === "OPA333");
     assert.ok(part);
     body.set("vendorCandidate", part.id);
     response = await POST(new Request("http://localhost/api/model", { method: "POST", body }));
     assert.equal(response.status, 200);
-    const checked = await response.json() as { vendorVerification: { status: string }; vendorCandidates: unknown[] };
+    const checked = await response.json() as { vendorVerification: { status: string; structuralOnly: boolean }; vendorCandidates: unknown[] };
     assert.equal(checked.vendorVerification.status, "checked");
+    assert.equal(checked.vendorVerification.structuralOnly, true);
     assert.equal(checked.vendorCandidates.length, 0);
   }
 );

@@ -32,7 +32,7 @@
 // this test was duplicated between the hold-out bench and the route they had
 // already drifted apart once.
 
-import { extractDatasheetText, namesThePart } from "../pdftext";
+import { extractDatasheetText, namesThePartAsSubject } from "../pdftext";
 
 // Front matter only, which is all `namesThePart` looks at anyway. Parsing two
 // pages of a 40-page datasheet keeps this off the chain's 12s budget; parsing
@@ -58,7 +58,7 @@ const PAGES_TO_READ = 2;
 export async function documentNamesPart(bytes: ArrayBuffer, partNumber: string): Promise<boolean> {
   try {
     const doc = await extractDatasheetText(bytes, { maxPages: PAGES_TO_READ });
-    return namesThePart(doc, partNumber, PAGES_TO_READ);
+    return namesThePartAsSubject(doc, partNumber);
   } catch {
     return true;
   }

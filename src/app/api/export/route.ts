@@ -13,10 +13,12 @@ import {
 import { FootprintInvalidError } from "../../../lib/confidence";
 import { assessCadAssurance } from "../../../lib/cad-assurance";
 import { assessAssurance, type AssuranceFinding } from "../../../lib/assurance";
-import { partSchema, resolveForExport } from "../../../lib/types";
+import { partSchema, resolveForExport, terminalPadSchema } from "../../../lib/types";
 import { sanitizeArtifactFileName, sanitizeFileName, clientKey, RateLimiter } from "../../../lib/retrieval";
 import { compareEagleLibraryPins, compareKicadSymbolPins, importCadFootprint } from "../../../lib/cad-import";
 import { importStepModel } from "../../../lib/step-import";
+import { withBsdlPinout } from "../../../lib/bsdl";
+import { thermalPadNumber } from "../../../lib/geometry";
 
 export const runtime = "nodejs";
 // Cap how long an export can hold a serverless function open.
@@ -122,7 +124,25 @@ export async function POST(request: Request) {
 
   // Refuse to generate CAD geometry from values nobody actually read off the
   // datasheet. A guessed pin count becomes guessed pads on a flight part.
-  const forResolution = named ? recordForPackage(partResult.data, named) : partResult.data;
+  let forResolution = named ? recordForPackage(partResult.data, named) : partResult.data;
+  const importedPinout = (payload as { importedPinout?: unknown }).importedPinout;
+  if (importedPinout !== undefined) {
+    if (typeof importedPinout !== "object" || importedPinout === null) {
+      return NextResponse.json({ error: "importedPinout must contain a manufacturer BSDL filename and file text." }, { status: 400 });
+    }
+    const candidate = importedPinout as { fileName?: unknown; source?: unknown };
+    if (typeof candidate.fileName !== "string" || typeof candidate.source !== "string" || !/\.(?:bsd|bsdl)$/i.test(candidate.fileName)) {
+      return NextResponse.json({ error: "The manufacturer pinout import must be a .bsd or .bsdl text file." }, { status: 400 });
+    }
+    try {
+      forResolution = withBsdlPinout(forResolution, candidate.source, sanitizeArtifactFileName(candidate.fileName));
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "The manufacturer BSDL pinout could not be imported.", code: "VENDOR_PINOUT_UNUSABLE" },
+        { status: 422 }
+      );
+    }
+  }
   const resolved = resolveForExport(forResolution);
   if (!resolved.ok) {
     if (resolved.untraceable?.length) {
@@ -288,11 +308,11 @@ export async function POST(request: Request) {
     // updated: the generator asked for it, the UI offered a box that accepts it,
     // and the route answered 400. Every value the record accepts has to be
     // accepted everywhere it is asked for.
-    if (sides !== 1 && sides !== 2 && sides !== 4) {
+    if (sides !== 1 && sides !== 2 && sides !== 3 && sides !== 4) {
       return NextResponse.json(
         {
           error:
-            "leadSides must be 1 (a single line of leads, as on a TO-220 or SIP), 2 (two opposing rows) or 4 (leads on all four sides)."
+            "leadSides must be 1 (one line), 2 (opposing rows), 3 (three sides) or 4 (all four sides)."
         },
         { status: 400 }
       );
@@ -328,7 +348,7 @@ export async function POST(request: Request) {
     // pad placer rather than approximated, and `sidesFrom` in the generator does
     // the rest: it checks the length against `leadSides` and the sum against the
     // pin count, and refuses a list that does neither.
-    if (typeof perSide !== "string" || !/^\d{1,3}(?:,\d{1,3})?$|^\d{1,3}(?:,\d{1,3}){3}$/.test(perSide)) {
+    if (typeof perSide !== "string" || !/^\d{1,3}(?:,\d{1,3}){1,3}$/.test(perSide)) {
       return NextResponse.json(
         { error: "leadsPerSide must be comma-separated whole counts from pin 1, one per side, e.g. 6,6,6,5." },
         { status: 400 }
@@ -348,6 +368,49 @@ export async function POST(request: Request) {
     suppliedNumbers.mounting = mounting;
   }
 
+  const thermalRotation = (payload as Record<string, unknown>).thermalPadRotationDeg;
+  if (thermalRotation !== undefined) {
+    if (typeof thermalRotation !== "number" || !Number.isFinite(thermalRotation) || thermalRotation < -360 || thermalRotation > 360) {
+      return NextResponse.json(
+        { error: "thermalPadRotationDeg must be a finite angle from -360 to 360 degrees." },
+        { status: 400 }
+      );
+    }
+    suppliedNumbers.thermalPadRotationDeg = thermalRotation;
+  }
+  const terminalPads = (payload as Record<string, unknown>).terminalPads;
+  if (terminalPads !== undefined) {
+    const parsed = terminalPadSchema.array().min(1).max(512).safeParse(terminalPads);
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error:
+            "terminalPads must be a non-empty JSON array with one numbered land per pin and finite xMm, yMm, widthMm, heightMm, and shape values."
+        },
+        { status: 400 }
+      );
+    }
+    const numbers = parsed.data.map((pad) => pad.number);
+    if (new Set(numbers).size !== numbers.length) {
+      return NextResponse.json({ error: "terminalPads contains a repeated terminal number." }, { status: 400 });
+    }
+    const expected = new Set(part.pins.map((pin) => pin.number));
+    const received = new Set(numbers);
+    const missing = [...expected].filter((number) => !received.has(number));
+    const unexpected = [...received].filter((number) => !expected.has(number));
+    if (missing.length > 0 || unexpected.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "terminalPads must contain exactly one land for every numbered package pin." +
+            `${missing.length ? ` Missing: ${missing.join(", ")}.` : ""}` +
+            `${unexpected.length ? ` Unexpected: ${unexpected.join(", ")}.` : ""}`
+        },
+        { status: 400 }
+      );
+    }
+    suppliedNumbers.terminalPads = parsed.data;
+  }
   // This is the public file-producing boundary. The chooser already uses the
   // same policy to describe each option, but callers may invoke this route
   // directly, so a proven contradiction is checked again before bytes exist.
@@ -462,6 +525,36 @@ export async function POST(request: Request) {
     // paragraph. Deliberately NOT `needs`: a violation is not a question, and
     // dressing it as one would prompt for a value that fixes nothing.
     if (error instanceof FootprintInvalidError) {
+      const thermalNumber = thermalPadNumber(part.pinCount);
+      const missingThermalRotation =
+        part.exposedPad &&
+        (part.dimensions.thermalPadRotationDeg ?? null) === null &&
+        suppliedNumbers.thermalPadRotationDeg === undefined &&
+        error.violations.some((violation) =>
+          violation.includes(`lands ${thermalNumber} and `) || violation.includes(`and ${thermalNumber} `)
+        );
+      if (missingThermalRotation) {
+        const why =
+          `${part.packageType}'s exposed pad meets a numbered land when treated as axis-aligned, and the ` +
+          `package drawing's pad rotation was not read. Enter the angle printed or drawn there; Forge will ` +
+          `rebuild and re-run the same copper-overlap checks rather than assuming zero degrees.`;
+        return NextResponse.json(
+          {
+            error: `Cannot generate CAD output: ${why}`,
+            code: "INPUT_REQUIRED",
+            needs: [{
+              field: "thermalPadRotationDeg",
+              label: "Exposed-pad rotation",
+              why,
+              unit: "degrees",
+              scope: "part"
+            }],
+            packageType: part.packageType,
+            pinCount: part.pinCount
+          },
+          { status: 422 }
+        );
+      }
       return NextResponse.json(
         {
           error: error.message,

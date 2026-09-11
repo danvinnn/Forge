@@ -142,7 +142,11 @@ export function assessCadAssurance(
       .map((check) => ({
         id: `record:${check.id}`,
         label: check.label,
-        state: "contradiction" as const,
+        // A manufacturer's printed land pattern is itself an authoritative
+        // construction source. Falling outside the transcribed IPC band can
+        // mean a vendor house rule or a reading error; it is evidence to review,
+        // not proof that the two records contradict each other.
+        state: check.id === "printed-in-band" ? "review" as const : "contradiction" as const,
         detail: check.detail
       })),
     ...cadElectricalTypeLimitations(part.pins)

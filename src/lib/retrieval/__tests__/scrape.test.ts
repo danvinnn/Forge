@@ -147,6 +147,38 @@ test("still resolves TI directly, unaffected by the distributor additions", asyn
   }
 });
 
+test("searches the named manufacturer's domain before accepting a distributor copy", async () => {
+  const officialUrl = "https://www.vishay.com/docs/88503/1n4001.pdf";
+  const distributorUrl = "https://www.mouser.com/datasheet/2/149/1N4001-81693.pdf";
+  const queries: string[] = [];
+  const search = new SearchClient([
+    {
+      name: "ordered-results",
+      isConfigured: () => true,
+      search: async (query: string) => {
+        queries.push(query);
+        return [query.startsWith("site:vishay.com") ? officialUrl : distributorUrl];
+      }
+    }
+  ]);
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url === officialUrl || url === distributorUrl) {
+      return new Response(PDF_BYTES, { status: 200, headers: { "content-type": "application/pdf" } });
+    }
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+  try {
+    const ref = await new ScrapeResolver(search).resolve("1N4007", { manufacturer: "Vishay" });
+    assert.ok(ref);
+    assert.equal(ref!.pdfUrl, officialUrl);
+    assert.match(queries[0], /^site:vishay\.com /);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 // --- Blocked search must not become a false "not found" ---------------------------------------
 import { SearchClient, SearchBlockedError } from "../resolvers/search";
 

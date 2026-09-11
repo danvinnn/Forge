@@ -5,7 +5,8 @@ import {
   type ExportFormat,
   type PartRecord,
   type PinRecord,
-  type ResolvedPart
+  type ResolvedPart,
+  type TerminalPadRecord
 } from "./types";
 import {
   computeLandPattern,
@@ -24,9 +25,12 @@ import {
   declaredLeadCount,
   designatorToken,
   familyToken,
+  isTwoEndedChipPackageName,
   normaliseForMatch,
+  mountingFromPackageName,
   outlineCodeDesignator,
   pinTableFor,
+  requiresAuxiliaryPadInventory,
   sameDesignatorName
 } from "./packagevariants";
 import {
@@ -37,6 +41,7 @@ import {
   type Corroboration,
   type FootprintGeometry,
   type Pad,
+  type Point,
   type SymbolGeometry,
   type SymbolPin,
   type ThermalVia
@@ -48,6 +53,17 @@ import { assessCadAssurance } from "./cad-assurance";
 import type { AssuranceDecision } from "./assurance";
 import { emitKicadFootprint, emitKicadSymbol } from "./emitters/kicad";
 import { emitAltiumPcbLib, emitAltiumSchLib } from "./emitters/altium";
+
+function rotatePoint(point: Point, degrees: number): Point {
+  if (degrees === 0) return point;
+  const angle = degrees * Math.PI / 180;
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  return {
+    xMm: point.xMm * cosine - point.yMm * sine,
+    yMm: point.xMm * sine + point.yMm * cosine
+  };
+}
 
 /**
  * A value the caller must supply because no document can.
@@ -91,12 +107,14 @@ export const REQUIRED_INPUT_FIELDS = [
   "landPadWidthMm",
   "landSpanMm",
   "landSpanCrossMm",
+  "terminalPads",
   "leadDiameterMm",
   "leadSides",
   "pitchMm",
   "leadsPerSide",
   "thermalPadLengthMm",
   "thermalPadWidthMm",
+  "thermalPadRotationDeg",
   "vacantLeadSlot",
   "mounting"
 ] as const;
@@ -125,7 +143,7 @@ export const MILLIMETRE_INPUT_FIELDS = [
 ] as const;
 
 /** Answered by their own rule on the route, one branch each. */
-export const SHAPED_INPUT_FIELDS = ["leadSides", "vacantLeadSlot", "leadsPerSide", "mounting"] as const;
+export const SHAPED_INPUT_FIELDS = ["leadSides", "vacantLeadSlot", "leadsPerSide", "mounting", "thermalPadRotationDeg", "terminalPads"] as const;
 
 /** Answered once per account on the settings screen, not per datasheet. */
 export const SETTING_INPUT_FIELDS = ["formedLeadSpanMm", "formedLeadContactMm"] as const;
@@ -156,7 +174,7 @@ export interface RequiredInput {
    * sides", which meant the one control the UI offered was a millimetre box for
    * a value that is neither.
    */
-  unit: "mm" | "count" | "counts" | "choice";
+  unit: "mm" | "count" | "counts" | "choice" | "terminal-layout";
   /** Fixed choices when `unit` is `choice`; labels are safe to show verbatim. */
   choices?: ReadonlyArray<{ value: string; label: string }>;
   scope: "install" | "part";
@@ -234,13 +252,41 @@ function printedLand(
   const padLengthMm = part.dimensions.landPadLengthMm;
   const padWidthMm = part.dimensions.landPadWidthMm;
   const centreSpan = part.dimensions.landSpanMm;
-  if (!padLengthMm || !padWidthMm || !centreSpan) return null;
-  if (padLengthMm <= 0 || padWidthMm <= 0 || centreSpan <= 0) return null;
+  const single = part.dimensions.leadSides === 1;
+  if (!padLengthMm || !padWidthMm || (!single && !centreSpan)) return null;
+  if (padLengthMm <= 0 || padWidthMm <= 0 || (!single && (centreSpan as number) <= 0)) return null;
+
+  const pitchMm = part.dimensions.pitchMm;
+  if (pitchMm && pitchMm > 0 && padWidthMm >= pitchMm) {
+    discards.push(
+      `the printed footprint was rejected: a ${padWidthMm} mm land on a ${pitchMm} mm pitch would touch its ` +
+        `neighbour, so the land width or the pitch was misread`
+    );
+    return null;
+  }
+
+  // A single row has no opposing-row span. Requiring one made the exporter
+  // discard the exact pad size printed for edge connectors and recompute a
+  // different pad from the component lead instead. The centre line is the
+  // contact row itself, so zero is derived geometry rather than a missing
+  // datasheet dimension.
+  if (single) {
+    return {
+      padWidthMm,
+      padLengthMm,
+      padCentreMm: 0,
+      zMaxMm: padLengthMm,
+      gMinMm: 0,
+      courtyardHalfMm: padLengthMm / 2 + COURTYARD_EXCESS[densityLevel],
+      densityLevel,
+      source: "printed"
+    };
+  }
 
   // Opposing lands must not meet in the middle. If they would, one of the three
   // numbers describes something other than this footprint, and the drawing has
   // been misread rather than the package being strange.
-  const gMinMm = centreSpan - padLengthMm;
+  const gMinMm = (centreSpan as number) - padLengthMm;
   if (gMinMm <= 0) {
     discards.push(
       `the printed footprint was rejected: a ${padLengthMm} mm land on a ${centreSpan} mm centre span puts the ` +
@@ -275,16 +321,15 @@ function printedLand(
   const rawCrossSpan = part.dimensions.landSpanCrossMm;
   const crossSpan = typeof rawCrossSpan === "number" && Number.isFinite(rawCrossSpan) ? rawCrossSpan : null;
 
-  const band = withinIpcBand(part, padLengthMm, centreSpan, formedLeadSpanMm, formedLeadContactMm, crossSpan);
+  const band = withinIpcBand(part, padLengthMm, centreSpan as number, formedLeadSpanMm, formedLeadContactMm, crossSpan);
   if (band === false) {
     discards.push(
-      `the printed footprint was rejected: it reaches ${(centreSpan + padLengthMm).toFixed(2)} mm toe to toe, ` +
+        `the printed footprint was rejected: it reaches ${((centreSpan as number) + padLengthMm).toFixed(2)} mm toe to toe, ` +
         `outside what IPC-7351B's density levels would produce for the leads this drawing states`
     );
     return null;
   }
 
-  const pitchMm = part.dimensions.pitchMm;
   // Neighbouring lands in one row sit a pitch apart, so a land WIDER than the
   // pitch would merge with the one beside it. No footprint does this.
   if (pitchMm && pitchMm > 0 && padWidthMm >= pitchMm) {
@@ -312,11 +357,11 @@ function printedLand(
   // the main span alone would draw a keep-out smaller than the copper whenever
   // the cross axis is the longer one, and a courtyard that does not contain its
   // own lands is the exact thing `validateGeometry` refuses.
-  const zMaxMm = Math.max(centreSpan, crossSpan ?? 0) + padLengthMm;
+  const zMaxMm = Math.max(centreSpan as number, crossSpan ?? 0) + padLengthMm;
   return {
     padWidthMm,
     padLengthMm,
-    padCentreMm: centreSpan / 2,
+    padCentreMm: (centreSpan as number) / 2,
     ...(crossSpan !== null && crossSpan !== centreSpan ? { padCentreCrossMm: crossSpan / 2 } : {}),
     zMaxMm,
     gMinMm,
@@ -739,7 +784,10 @@ function gridSymbolSides(pins: readonly PinRecord[]): { left: string[]; right: s
 }
 
 function pinByNumber(part: ResolvedPart): Map<string, PinRecord> {
-  return new Map(part.pins.map((pin) => [String(pin.number), pin]));
+  return new Map(
+    [...part.pins, ...(part.exposedPadPin ? [part.exposedPadPin] : [])]
+      .map((pin) => [String(pin.number), pin])
+  );
 }
 
 /**
@@ -761,9 +809,14 @@ export function buildSymbolGeometry(part: ResolvedPart): SymbolGeometry {
   // which would have made "the footprint cannot be built, the symbol can" a
   // false promise. Ordered by row then column, which is how a datasheet's own
   // table is printed and how a person reads one.
-  const { left, right } = isGridAddressed(part.pins)
+  const sides = isGridAddressed(part.pins)
     ? gridSymbolSides(part.pins)
     : dualRowSides(part.pinCount);
+  const left = [...sides.left];
+  const right = [...sides.right];
+  if (part.exposedPadPin && !left.includes(part.exposedPadPin.number) && !right.includes(part.exposedPadPin.number)) {
+    right.push(part.exposedPadPin.number);
+  }
   const byNumber = pinByNumber(part);
   const rows = Math.max(left.length, right.length);
 
@@ -1045,16 +1098,20 @@ function buildFootprintGeometryFromInputs(
   if (part.dimensions.mounting === null) {
     const hasSurfaceLands =
       part.dimensions.landPadLengthMm !== null && part.dimensions.landPadWidthMm !== null;
+    const namedMounting = mountingFromPackageName(part.packageType);
     if (
       part.dimensions.leadForm === "gullwing" ||
       part.dimensions.leadForm === "nolead" ||
-      hasSurfaceLands
+      hasSurfaceLands ||
+      namedMounting === "smd"
     ) {
       // A rectangular pad length and width read from a recommended land-pattern
       // drawing are themselves positive SMD evidence. A plated-hole drawing is
       // represented by its hole/lead diameter instead; this does not infer from
       // a package name or from silence.
       part = { ...part, dimensions: { ...part.dimensions, mounting: "smd" } };
+    } else if (namedMounting === "through-hole") {
+      part = { ...part, dimensions: { ...part.dimensions, mounting: "through-hole" } };
     } else {
       const why =
         `The package drawing did not establish whether ${part.packageType} mounts on surface lands or in ` +
@@ -1071,6 +1128,24 @@ function buildFootprintGeometryFromInputs(
         scope: "part"
       }]);
     }
+  }
+
+  // Connectors and other board interfaces commonly have mandatory soldered
+  // hold-downs or locating holes that are not electrical terminals. A layout
+  // containing only the numbered contacts is not a usable partial footprint:
+  // it can lift or be impossible to assemble. The reader must positively
+  // establish the auxiliary feature list (an empty array is a real answer), or
+  // the caller can import the manufacturer's complete CAD footprint.
+  if (
+    part.dimensions.auxiliaryPads == null &&
+    requiresAuxiliaryPadInventory(part.packageType)
+  ) {
+    throw new FootprintUnavailableError(
+      `${part.packageType} may use non-numbered hold-down lands or mechanical holes, and the recommended ` +
+        `board layout was not read well enough to establish all of them. Forge will not emit only the numbered ` +
+        `contacts. Re-read the recommended layout or import the manufacturer's complete CAD footprint.`,
+      []
+    );
   }
 
   // A GRID-ADDRESSED PART HAS NO ARRANGEMENT HERE YET, and this is where that is
@@ -1168,6 +1243,67 @@ function buildFootprintGeometryFromInputs(
   // See `Discards`: a check that rejects a printed footprint and returns null is
   // reported to the user as a datasheet that printed none.
   const discards: Discards = [];
+
+  // EXACT NUMBERED COPPER NEEDS NO REGULAR-ROW SURROGATE.
+  //
+  // Four corner terminals are the measured case: one horizontal pitch and one
+  // opposing-row span cannot express both centre spacings, so forcing their
+  // complete coordinates back through `landPadLengthMm`/`landSpanMm` either
+  // asks unanswerable scalar questions or moves the pads to edge midpoints.
+  // `terminalPads` is already the manufacturer's complete recommended layout.
+  // Emit it directly, while deriving only the descriptive/courtyard summary
+  // that `assemble` needs. The finished-footprint invariants still check every
+  // terminal, overlap, marker and courtyard before a file is written.
+  const exactTerminals =
+    (part.dimensions.terminalPads?.length ?? 0) > 0
+      ? part.dimensions.terminalPads!
+      : null;
+  if (exactTerminals) {
+    const minX = Math.min(...exactTerminals.map((pad) => pad.xMm));
+    const maxX = Math.max(...exactTerminals.map((pad) => pad.xMm));
+    const minY = Math.min(...exactTerminals.map((pad) => pad.yMm));
+    const maxY = Math.max(...exactTerminals.map((pad) => pad.yMm));
+    const extent = Math.max(
+      ...exactTerminals.map((pad) => Math.max(
+        Math.abs(pad.xMm) + pad.widthMm / 2,
+        Math.abs(pad.yMm) + pad.heightMm / 2
+      ))
+    );
+    const first = exactTerminals[0];
+    const summary: LandPattern = {
+      padWidthMm: first.widthMm,
+      padLengthMm: first.heightMm,
+      padCentreMm: Math.max(Math.abs(minX), Math.abs(maxX)),
+      ...((maxY - minY) > 0
+        ? { padCentreCrossMm: Math.max(Math.abs(minY), Math.abs(maxY)) }
+        : {}),
+      zMaxMm: extent * 2,
+      gMinMm: Math.max(0.001, Math.min(maxX - minX, maxY - minY)),
+      courtyardHalfMm: extent + COURTYARD_EXCESS[densityLevel],
+      densityLevel,
+      source: "printed"
+    };
+    return assemble(
+      part,
+      densityLevel,
+      summary,
+      {
+        arrangement: "dual",
+        pitchMm: part.dimensions.pitchMm ?? 0,
+        family: part.packageType,
+        source: "the exact numbered copper printed in this datasheet"
+      },
+      {
+        from: "printed",
+        against: null,
+        agrees: false,
+        because: "no-ipc-model-for-lead-form",
+        detail: "Taken terminal by terminal from the footprint printed in this datasheet."
+      },
+      undefined,
+      discards
+    );
+  }
 
   const layout = datasheetLayout(part);
   const printed = printedLand(part, densityLevel, discards, formedLeadSpanMm, formedLeadContactMm);
@@ -1341,17 +1477,20 @@ function usedSuppliedDimensions(
     "landPadLengthMm",
     "landPadWidthMm",
     "landSpanMm",
-    "landSpanCrossMm"
+    "landSpanCrossMm",
+    "terminalPads"
   ]);
   for (const [field, value] of Object.entries(supplied) as Array<
-    [keyof SuppliedDimensions, number | string | undefined]
+    [keyof SuppliedDimensions, number | string | TerminalPadRecord[] | undefined]
   >) {
     if (value === undefined) continue;
     const held = part.dimensions[field as keyof ResolvedPart["dimensions"]];
     // Land-pattern answers may deliberately correct a rejected reading. Every
     // other answer fills a blank only; an unsolicited value never overrides
     // what the datasheet stated.
-    if (correctedLand.has(field) || held === null || held === undefined) used[field] = value;
+    if (correctedLand.has(field) || held === null || held === undefined) {
+      used[field] = Array.isArray(value) ? JSON.stringify(value) : value;
+    }
   }
   return used;
 }
@@ -1361,12 +1500,14 @@ const COPPER_INPUT_FIELDS = new Set([
   "landPadWidthMm",
   "landSpanMm",
   "landSpanCrossMm",
+  "terminalPads",
   "leadDiameterMm",
   "pitchMm",
   "leadSides",
   "leadsPerSide",
   "thermalPadLengthMm",
   "thermalPadWidthMm",
+  "thermalPadRotationDeg",
   "vacantLeadSlot"
 ]);
 
@@ -1508,7 +1649,15 @@ function throughHoleFootprint(part: ResolvedPart, densityLevel: DensityLevel): F
   //
   // Still refused where nobody read it. Null is not a default, and null was the
   // exact state that once fell through to two rows.
-  const rows = part.dimensions.leadSides;
+  // An axial two-terminal part has two leads on opposite BODY sides, but one
+  // collinear row of board holes. `leadSides=2` describes the body and must not
+  // be interpreted as two opposing PCB rows (which asks for a nonexistent row
+  // span and places the holes on the wrong axis). The standard axial package
+  // designation plus exactly two terminals fixes this topology. The board
+  // designer still owns the bend/lead spacing when the drawing does not.
+  const axialTwoTerminal =
+    part.pinCount === 2 && /\b(?:AXIAL|DO[ -]?(?:35|41|201|204)(?:[ -]?[A-Z]{1,3})?|DIN[ -]?0207)\b/i.test(part.packageType);
+  const rows = axialTwoTerminal ? 1 : part.dimensions.leadSides;
   if (rows !== 1 && rows !== 2) {
     const why =
       `${part.partNumber} mounts through the board, and how many rows its pins form was not read. ` +
@@ -1555,10 +1704,12 @@ function throughHoleFootprint(part: ResolvedPart, densityLevel: DensityLevel): F
   const printedHoleMm = typeof printedRaw === "number" && printedRaw > 0 ? printedRaw : null;
 
   const needs: RequiredInput[] = [];
-  const why =
-    `${part.partNumber} mounts through the board, so its footprint is holes rather than lands. ` +
-    `IPC-7251 sizes a hole from the lead it takes, and the row spacing is what the drawing gives ` +
-    `in place of a lead span.`;
+  const why = axialTwoTerminal
+    ? `${part.partNumber} is an axial through-hole part. IPC-7251 sizes each hole from the lead diameter, ` +
+      `but the hole-to-hole spacing is chosen when the leads are bent for this board; it was not established here.`
+    : `${part.partNumber} mounts through the board, so its footprint is holes rather than lands. ` +
+      `IPC-7251 sizes a hole from the lead it takes, and the row spacing is what the drawing gives ` +
+      `in place of a lead span.`;
   // Each question names the field that ACTUALLY receives the answer.
   //
   // Two of these three named the wrong one when this path was written: the lead
@@ -1594,7 +1745,13 @@ function throughHoleFootprint(part: ResolvedPart, densityLevel: DensityLevel): F
     needs.push({ field: "landSpanMm", label: "Row spacing, centre to centre", why, unit: "mm", scope: "part" });
   }
   if (pitchMm === null) {
-    needs.push({ field: "pitchMm", label: "Pin pitch along the row", why, unit: "mm", scope: "part" });
+    needs.push({
+      field: "pitchMm",
+      label: axialTwoTerminal ? "Chosen hole-to-hole lead spacing" : "Pin pitch along the row",
+      why,
+      unit: "mm",
+      scope: "part"
+    });
   }
   if (
     needs.length > 0 ||
@@ -2283,12 +2440,14 @@ export interface SuppliedDimensions {
    * same as the other one", which is a guess dressed as a reading.
    */
   landSpanCrossMm?: number;
+  terminalPads?: TerminalPadRecord[];
   leadDiameterMm?: number;
   pitchMm?: number;
-  leadSides?: 1 | 2 | 4;
+  leadSides?: 1 | 2 | 3 | 4;
   leadsPerSide?: string;
   thermalPadLengthMm?: number;
   thermalPadWidthMm?: number;
+  thermalPadRotationDeg?: number;
   vacantLeadSlot?: number;
   mounting?: "smd" | "through-hole";
 }
@@ -2332,12 +2491,14 @@ function withSupplied(part: ResolvedPart, supplied: SuppliedDimensions | undefin
       landPadWidthMm: correct(part.dimensions.landPadWidthMm, supplied.landPadWidthMm),
       landSpanMm: correct(part.dimensions.landSpanMm, supplied.landSpanMm),
       landSpanCrossMm: correct(part.dimensions.landSpanCrossMm, supplied.landSpanCrossMm),
+      terminalPads: correct(part.dimensions.terminalPads ?? null, supplied.terminalPads),
       leadDiameterMm: fill(part.dimensions.leadDiameterMm, supplied.leadDiameterMm),
       pitchMm: fill(part.dimensions.pitchMm, supplied.pitchMm),
       leadSides: fill(part.dimensions.leadSides, supplied.leadSides),
       leadsPerSide: fill(part.dimensions.leadsPerSide, supplied.leadsPerSide),
       thermalPadLengthMm: fill(part.dimensions.thermalPadLengthMm, supplied.thermalPadLengthMm),
       thermalPadWidthMm: fill(part.dimensions.thermalPadWidthMm, supplied.thermalPadWidthMm),
+      thermalPadRotationDeg: fill(part.dimensions.thermalPadRotationDeg ?? null, supplied.thermalPadRotationDeg),
       vacantLeadSlot: fill(part.dimensions.vacantLeadSlot, supplied.vacantLeadSlot),
       mounting: fill(part.dimensions.mounting, supplied.mounting)
     }
@@ -2501,6 +2662,37 @@ function askForLandPattern(
       `prints one it is usually beside the package outline drawing, and the page is shown here; ` +
       `otherwise take these from the vendor's application note or your own library.`;
 
+  // Small bottom-terminal packages can put their numbered contacts at four
+  // corners, which one pitch plus one row span cannot represent. If neither an
+  // exact terminal layout nor a scalar pattern was read, ask for the complete
+  // manufacturer layout first. One exact answer can build the footprint; asking
+  // for three regular-row scalars here would invite a wrong edge-midpoint
+  // approximation. This applies to the package class, never to a part number.
+  const exactTerminals = part.dimensions.terminalPads ?? [];
+  const smallBottomTerminal =
+    part.pinCount > 0 &&
+    part.pinCount <= 8 &&
+    /(?:X?DFN|LGA|WLCSP)/i.test(part.packageType);
+  const noScalarPattern =
+    part.dimensions.landPadLengthMm === null &&
+    part.dimensions.landPadWidthMm === null &&
+    part.dimensions.landSpanMm === null;
+  if (smallBottomTerminal && exactTerminals.length === 0 && noScalarPattern) {
+    return [{
+      field: "terminalPads",
+      label: "Complete numbered-land layout",
+      why:
+        `${part.packageType} is a small bottom-terminal package whose lands may sit at the four corners. ` +
+        `The recommended-layout image was inspected but its complete numbered copper was not read. Paste the ` +
+        `manufacturer layout as a JSON array with one {number,xMm,yMm,widthMm,heightMm,shape} entry per pin; ` +
+        `Forge validates every terminal, overlap and courtyard before building it.`,
+      unit: "terminal-layout",
+      scope: "part",
+      page: landPage,
+      pageLabel: landLabel
+    }];
+  }
+
   // A VALUE THAT IS PRESENT AND WAS REJECTED IS STILL A QUESTION.
   //
   // Every test below asks only about a BLANK, which is right when the product
@@ -2541,13 +2733,13 @@ function askForLandPattern(
   //
   // Asked only for `leadSides === 4`, because a two-sided or one-sided package
   // genuinely has one span and asking would be friction with no answer behind it.
-  if (part.dimensions.leadSides === 4 && (part.dimensions.landSpanCrossMm === null || rejected("landSpanCrossMm"))) {
+  if ((part.dimensions.leadSides === 3 || part.dimensions.leadSides === 4) && (part.dimensions.landSpanCrossMm === null || rejected("landSpanCrossMm"))) {
     needs.push({
       field: "landSpanCrossMm",
       label: "Centre-to-centre span across the other axis",
       why:
-        `${part.packageType} carries leads on all four sides, so its footprint has TWO centre spans, one per ` +
-        `axis. Most four-sided packages are rectangular and the two differ; where they are equal, enter the ` +
+        `${part.packageType} carries leads on more than one axis, so its footprint has TWO centre spans, one per ` +
+        `axis. Most multi-axis packages are rectangular and the two differ; where they are equal, enter the ` +
         `same number again rather than leaving it, because assuming they are equal is how a rectangular part ` +
         `gets square copper.`,
       unit: "mm",
@@ -2556,14 +2748,14 @@ function askForLandPattern(
       pageLabel: landLabel
     });
   }
-  if (part.dimensions.leadSides !== 1 && part.dimensions.leadSides !== 2 && part.dimensions.leadSides !== 4) {
+  if (part.dimensions.leadSides !== 1 && part.dimensions.leadSides !== 2 && part.dimensions.leadSides !== 3 && part.dimensions.leadSides !== 4) {
     needs.push({
       field: "leadSides",
       // 1 was missing here until 2026-08-18 while the through-hole ask beside it
       // offered it, so a single line of pins was unanswerable on the surface-
       // mount path: the label named two of the three values the record accepts.
-      label: "Sides carrying leads (1 for a TO-220 or SIP, 2 for a DIP or SOIC, 4 for a QFP)",
-      why: `The package drawing shows this, but it was not read for ${part.packageType}. A single line of leads along one edge is 1; two opposing rows is 2; leads on all four sides is 4.`,
+      label: "Sides carrying leads (1, 2, 3 or 4)",
+      why: `The package drawing shows this, but it was not read for ${part.packageType}. A single line is 1; opposing rows are 2; an edge module can use 3; leads around the whole body are 4.`,
       unit: "count",
       scope: "part"
     });
@@ -2580,7 +2772,9 @@ function askForLandPattern(
   // Found 2026-08-19 by answering every question the hold-out asked and seeing
   // which parts still refused. Three of the fifty-four sat here, each with its
   // whole printed footprint on the record.
-  if (part.dimensions.pitchMm === null) {
+  const pitchIsNotApplicable =
+    part.pinCount === 2 && part.dimensions.leadSides === 2 && isTwoEndedChipPackageName(part.packageType);
+  if (part.dimensions.pitchMm === null && !pitchIsNotApplicable) {
     needs.push({
       field: "pitchMm",
       label: "Lead pitch, centre to centre between neighbouring leads",
@@ -2619,7 +2813,7 @@ function sidesFrom(raw: string | null, pinCount: number, sides: number): number[
  * any package drawing.
  */
 interface PadLayout {
-  arrangement: "single" | "dual" | "quad";
+  arrangement: "single" | "dual" | "tri" | "quad";
   pitchMm: number;
   /** Named for the record and the file name. The datasheet's own designator. */
   family: string;
@@ -2635,15 +2829,12 @@ interface PadLayout {
  * requirement: pitch, pin count and the land pattern were already being read.
  */
 function datasheetLayout(part: ResolvedPart): PadLayout | null {
-  const pitchMm = part.dimensions.pitchMm;
-  const sides = part.dimensions.leadSides;
-  // 1, 2 or 4. Three is a real package shape and not one the pad placer builds,
-  // and null means nobody read it; both refuse here rather than being rounded to
-  // the nearest arrangement, which is how a 3-lead TO-220 once shipped as two
-  // columns 5 mm apart.
-  if (!pitchMm || pitchMm <= 0 || (sides !== 1 && sides !== 2 && sides !== 4)) return null;
+  const chip = part.pinCount === 2 && isTwoEndedChipPackageName(part.packageType);
+  const pitchMm = chip ? 0 : part.dimensions.pitchMm;
+  const sides = chip ? 2 : part.dimensions.leadSides;
+  if (pitchMm === null || pitchMm < 0 || (!chip && pitchMm === 0) || (sides !== 1 && sides !== 2 && sides !== 3 && sides !== 4)) return null;
   return {
-    arrangement: sides === 4 ? "quad" : sides === 1 ? "single" : "dual",
+    arrangement: sides === 4 ? "quad" : sides === 3 ? "tri" : sides === 1 ? "single" : "dual",
     pitchMm,
     family: part.packageType,
     source: "the recommended footprint printed in this datasheet"
@@ -2662,6 +2853,10 @@ function assemble(
   /** Readings rejected on the way here. Recorded even when the build succeeds. */
   discards: Discards = []
 ): FootprintGeometry {
+  const explicitTerminals =
+    (part.dimensions.terminalPads?.length ?? 0) > 0
+      ? part.dimensions.terminalPads!
+      : null;
   // The two rules that decide whether the pads can be PLACED at all. They were
   // below the table lookup and are now above both paths, because they are facts
   // about arranging pins, not about which table an entry came from.
@@ -2695,11 +2890,14 @@ function assemble(
     definition.arrangement === "dual" && part.pinCount % 2 !== 0 && perSideSlots % 2 === 1
       ? (perSideSlots + 1) / 2
       : null;
-  if (forcedVacancy !== null && !part.dimensions.vacantLeadSlot) {
+  if (!explicitTerminals && forcedVacancy !== null && !part.dimensions.vacantLeadSlot) {
     part = { ...part, dimensions: { ...part.dimensions, vacantLeadSlot: forcedVacancy } };
   }
 
-  if (definition.arrangement === "dual" && part.pinCount % 2 !== 0 && !part.dimensions.vacantLeadSlot) {
+  // A three-pin dual-row package has two leads opposite one centred lead. The
+  // singleton is centred between the other two; it is not one of two vacant
+  // grid positions, so asking for a slot could never describe the package.
+  if (!explicitTerminals && definition.arrangement === "dual" && part.pinCount % 2 !== 0 && part.pinCount !== 3 && !part.dimensions.vacantLeadSlot) {
     throw new FootprintUnavailableError(
       `${definition.family} is described here as two opposing rows, and ${part.pinCount} is an odd number of leads, so one row is a lead short. Which position it leaves empty is drawn on the pinout but was not read, and guessing it would put a lead where the package has none. No footprint is generated.`,
       [
@@ -2727,7 +2925,7 @@ function assemble(
   // The result is USED, which is the fix. It used to be computed, checked, and
   // then discarded by a pad placer that divided the count by four regardless.
   let quadSides: [number, number, number, number] | null = null;
-  if (definition.arrangement === "quad") {
+  if (!explicitTerminals && definition.arrangement === "quad") {
     const divided = sidesFrom(part.dimensions.leadsPerSide, part.pinCount, 4);
     if (divided) {
       quadSides = [divided[0], divided[1], divided[2], divided[3]];
@@ -2744,15 +2942,31 @@ function assemble(
     }
   }
 
+  let triSides: [number, number, number] | null = null;
+  if (!explicitTerminals && definition.arrangement === "tri") {
+    const divided = sidesFrom(part.dimensions.leadsPerSide, part.pinCount, 3);
+    if (!divided) {
+      const why = `${definition.family} has leads on three sides, so the pin count alone does not say how many belong on each side.`;
+      throw new FootprintUnavailableError(why, [
+        { field: "leadsPerSide", label: "Leads on the left, bottom and right sides from pin 1", why, unit: "counts", scope: "part" }
+      ]);
+    }
+    triSides = [divided[0], divided[1], divided[2]];
+  }
+
   const byNumber = pinByNumber(part);
   const pads: Pad[] = [];
-  const quad = definition.arrangement === "quad";
+  const quad = !explicitTerminals && definition.arrangement === "quad";
 
   // The widest row, which is what the pin-1 marker and the silkscreen fall back
   // to. On a quad with unequal sides the four rows have different spans, so each
   // side is stepped from its OWN count; see `alongSide`.
-  const perSideCount = quad
+  const perSideCount = explicitTerminals
+    ? 1
+    : quad
     ? Math.max(...quadSides!)
+    : definition.arrangement === "tri"
+      ? Math.max(...triSides!)
     : definition.arrangement === "single"
       ? part.pinCount
       : Math.ceil(part.pinCount / 2);
@@ -2919,12 +3133,21 @@ function assemble(
       centre: { xMm: 0, yMm: 0 },
       widthMm: thermal.widthMm,
       heightMm: thermal.heightMm,
-      shape: "roundrect",
+      shape: part.dimensions.thermalPadRotationDeg ? "rect" : "roundrect",
       mounting: "smd",
+      ...(part.dimensions.thermalPadRotationDeg
+        ? { rotationDeg: part.dimensions.thermalPadRotationDeg }
+        : {}),
       pasteApertures: thermal.apertures.map((aperture) => ({
-        centre: { xMm: aperture.xMm, yMm: aperture.yMm },
+        centre: rotatePoint(
+          { xMm: aperture.xMm, yMm: aperture.yMm },
+          part.dimensions.thermalPadRotationDeg ?? 0
+        ),
         widthMm: aperture.widthMm,
-        heightMm: aperture.heightMm
+        heightMm: aperture.heightMm,
+        ...(part.dimensions.thermalPadRotationDeg
+          ? { rotationDeg: part.dimensions.thermalPadRotationDeg }
+          : {})
       }))
     });
   };
@@ -2944,7 +3167,23 @@ function assemble(
   /** The equal-row case, which is every dual package and most quads. */
   const step = (index: number) => -rowSpanMm / 2 + index * definition.pitchMm;
 
-  if (quad) {
+  if (explicitTerminals) {
+    for (const terminal of explicitTerminals) {
+      pads.push({
+        number: terminal.number,
+        centre: { xMm: terminal.xMm, yMm: terminal.yMm },
+        widthMm: terminal.widthMm,
+        heightMm: terminal.heightMm,
+        shape: terminal.shape,
+        mounting: "smd",
+        ...(terminal.rotationDeg === undefined ? {} : { rotationDeg: terminal.rotationDeg }),
+        ...(part.dimensions.solderMaskExpansionMm === null ||
+        part.dimensions.solderMaskDefined !== "non-solder-mask-defined"
+          ? {}
+          : { solderMaskMarginMm: part.dimensions.solderMaskExpansionMm })
+      });
+    }
+  } else if (quad) {
     const { left, bottom, right, top } = quadRowSides(quadSides!);
 
     // A ROW OF LANDS HAS TO FIT INSIDE THE SPAN THAT HOLDS IT.
@@ -3056,6 +3295,24 @@ function assemble(
     bottom.forEach((number, index) => push(number, at(bottom, index), crossCentreMm, "y"));
     right.forEach((number, index) => push(number, land.padCentreMm, -at(right, index), "x"));
     top.forEach((number, index) => push(number, -at(top, index), -crossCentreMm, "y"));
+  } else if (definition.arrangement === "tri") {
+    const [leftCount, bottomCount, rightCount] = triSides!;
+    let next = 1;
+    const take = (count: number) => Array.from({ length: count }, () => next++);
+    const left = take(leftCount);
+    const bottom = take(bottomCount);
+    const right = take(rightCount);
+    const crossCentreMm = land.padCentreCrossMm ?? land.padCentreMm;
+    const along = (side: number[], index: number) => (index - (side.length - 1) / 2) * definition.pitchMm;
+    // Three-sided edge modules are open at the top for an antenna or another
+    // keep-out. Their vertical rows meet the bottom row; centring each vertical
+    // row on the package origin moves its last lands into the bottom-row corner
+    // lands. Anchor both vertical rows at the bottom-row centre line instead.
+    // Numbering remains counterclockwise: left top-to-bottom, bottom
+    // left-to-right, right bottom-to-top.
+    left.forEach((number, index) => push(number, -land.padCentreMm, crossCentreMm - (left.length - 1 - index) * definition.pitchMm, "x"));
+    bottom.forEach((number, index) => push(number, along(bottom, index), crossCentreMm, "y"));
+    right.forEach((number, index) => push(number, land.padCentreMm, crossCentreMm - index * definition.pitchMm, "x"));
   } else if (definition.arrangement === "single") {
     // ONE LINE OF PINS, which is what a TO-220, TO-92 or SIP is.
     //
@@ -3071,7 +3328,24 @@ function assemble(
   } else {
     const { left, right } = dualRowSides(part.pinCount, part.dimensions.vacantLeadSlot);
     left.forEach((number, index) => push(number, -land.padCentreMm, step(index), "x"));
-    right.forEach((number, index) => push(number, land.padCentreMm, step(index), "x"));
+    right.forEach((number, index) => push(number, land.padCentreMm, part.pinCount === 3 ? 0 : step(index), "x"));
+  }
+
+  for (const auxiliary of part.dimensions.auxiliaryPads ?? []) {
+    const throughHole = auxiliary.kind !== "smd-pad";
+    pads.push({
+      number: "",
+      centre: { xMm: auxiliary.xMm, yMm: auxiliary.yMm },
+      widthMm: auxiliary.widthMm,
+      heightMm: auxiliary.heightMm,
+      shape: auxiliary.shape,
+      mounting: throughHole ? "through-hole" : "smd",
+      ...(auxiliary.rotationDeg === undefined ? {} : { rotationDeg: auxiliary.rotationDeg }),
+      ...(auxiliary.hasPaste === undefined ? {} : { hasPaste: auxiliary.hasPaste }),
+      ...(throughHole
+        ? { drillMm: auxiliary.drillMm, plated: auxiliary.kind === "plated-hole" }
+        : {})
+    });
   }
 
   emitThermalPad();
@@ -3288,7 +3562,17 @@ function assemble(
     // Derived from the placement rather than assumed: the marker is offset from
     // the pad that carries pin 1, on the side away from pin 2.
     pin1Marker:
-      definition.arrangement === "single"
+      explicitTerminals
+        ? (() => {
+            const first = explicitTerminals.find((pad) => pad.number === "1") ?? explicitTerminals[0];
+            const length = Math.hypot(first.xMm, first.yMm) || 1;
+            const clearance = Math.max(first.widthMm, first.heightMm) * 0.8;
+            return {
+              xMm: first.xMm + (first.xMm || -1) / length * clearance,
+              yMm: first.yMm + first.yMm / length * clearance
+            };
+          })()
+        : definition.arrangement === "single"
         ? {
             xMm: -((part.pinCount - 1) / 2) * definition.pitchMm - definition.pitchMm * 0.7,
             yMm: -(land.padLengthMm / 2) - definition.pitchMm * 0.4
@@ -3310,9 +3594,11 @@ function assemble(
       family: definition.family,
       source: definition.source,
       densityLevel,
-      padWidthMm: Number(land.padWidthMm.toFixed(3)),
-      padLengthMm: Number(land.padLengthMm.toFixed(3)),
-      centreToCentreMm: Number((land.padCentreMm * 2).toFixed(3)),
+      padWidthMm: Number((explicitTerminals?.[0]?.widthMm ?? land.padWidthMm).toFixed(3)),
+      padLengthMm: Number((explicitTerminals?.[0]?.heightMm ?? land.padLengthMm).toFixed(3)),
+      centreToCentreMm: Number((explicitTerminals
+        ? Math.max(...explicitTerminals.map((pad) => pad.xMm)) - Math.min(...explicitTerminals.map((pad) => pad.xMm))
+        : land.padCentreMm * 2).toFixed(3)),
       // THE OTHER AXIS, when the two differ. The provenance block is what a
       // reviewer reads six months later to see what was built, and on a
       // rectangular quad it stated one span for a footprint with two: the file
@@ -3321,7 +3607,7 @@ function assemble(
         ? { centreToCentreCrossMm: Number((land.padCentreCrossMm * 2).toFixed(3)) }
         : {}),
       pitchMm: definition.pitchMm,
-      arrangement: definition.arrangement,
+      arrangement: explicitTerminals ? "explicit-numbered-lands" : definition.arrangement,
       corroboration,
       // See `FootprintProvenance.discards`. Threaded from the caller rather than
       // rebuilt, because the discards happen before `assemble` is reached.
@@ -3588,7 +3874,10 @@ export async function createExportZip(
     throw new FootprintUnavailableError(
       reason ??
         `${part.partNumber} is complete apart from its package body size, which the 3D model is built from.`,
-      [...needs, ...(options.importedStep ? importedAltiumHeightNeeds : bodyNeeds)]
+      // Body dimensions only control the optional STEP solid. Do not bundle
+      // them into a response whose footprint is blocked by another fact: once
+      // that fact is supplied, CAD can ship and disclose the omitted solid.
+      [...needs, ...(options.importedStep ? importedAltiumHeightNeeds : [])]
     );
   }
   if (importedAltiumHeightNeeds.length > 0) {
@@ -3954,6 +4243,7 @@ export function asPackage(part: ResolvedPart, designator: string): ResolvedPart 
     // 2026-08-28 resolved through this path and were still wrong after the merge
     // was fixed.
     exposedPad: entry?.exposedPad || statesAnExposedPad(packageDimensions),
+    exposedPadPin: entry?.exposedPadPin ?? null,
     // BLANK, EXCEPT WHERE THE DOCUMENT MEASURED THIS PACKAGE ITSELF.
     //
     // Blanking is right and stays the default: every dimension on the record was
@@ -4532,6 +4822,7 @@ function withPinTable(
     packageType: string;
     pins?: PinRecord[];
     exposedPad?: boolean;
+    exposedPadPin?: PinRecord | null;
     citation?: Citation | null;
     dimensions?: Partial<PartRecord["dimensions"]>;
   }
@@ -4552,6 +4843,7 @@ function withPinTable(
     // The pad this package has, rather than whatever the record carried from
     // whichever package the reading happened to settle on. See `asPackage`.
     exposedPad: table.exposedPad ?? record.exposedPad,
+    exposedPadPin: table.exposedPadPin ?? record.exposedPadPin,
     // AND THIS PACKAGE'S OWN MEASUREMENTS, where the document stated them.
     //
     // The record's flat dimensions describe whichever package the reading

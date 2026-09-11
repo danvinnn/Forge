@@ -142,6 +142,16 @@ test("a span whose minimum dips below a nominal body is NOT a failure", () => {
   assert.equal(find(checks, "span-covers-body").state, "pass");
 });
 
+test("a no-lead terminal span inside the body is not a gull-wing contradiction", () => {
+  const checks = confidenceChecks(sound({
+    leadForm: "nolead",
+    bodyLengthMm: 2.5,
+    bodyWidthMm: 2.5,
+    leadSpanMm: { minMm: 2.3, maxMm: 2.3 }
+  }));
+  assert.equal(find(checks, "span-covers-body").state, "unavailable");
+});
+
 test("the IPC band is not applied to a package the standard's gull-wing goals do not describe", () => {
   // Same measurement: six of the eleven failures were QFN and DFN parts, two of
   // them adrift by 0.01 mm. A no-lead terminal ends at the body edge and has no

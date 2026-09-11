@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { extractDatasheetText, type DatasheetText } from "./pdftext";
 import { findVendorLandPattern } from "./vendorland";
-import { findOrderablePackages, findPackageVariants } from "./packagevariants";
+import { findOrderablePackages, findPackageVariants, findSubjectPackages } from "./packagevariants";
 import {
   unknown,
   type LeadWidth,
@@ -107,6 +107,66 @@ export interface ExtractionHints {
 const MAX_PACKAGE_HINT_LENGTH = 64;
 
 /**
+ * A symmetric two-terminal chip component whose terminal numbering carries no
+ * electrical choice.
+ *
+ * A non-polar chip resistor or MLCC is electrically unchanged if its two ends
+ * are exchanged.  For those parts, emitting terminals 1 and 2 is a numbering
+ * convention, not a guessed pinout.  The package must independently be a
+ * standard two-ended chip size, and documents describing arrays, networks or
+ * polarized capacitors are excluded.  Everything else stays on the normal
+ * pin-table recovery path.
+ */
+function symmetricChipTerminals(
+  doc: DatasheetText,
+  packageType: string | undefined
+): { page: number; label: string } | null {
+  if (!packageType || !/\b(?:0201|0402|0603|0805|1206|1210|1812|2010|2512)\b/i.test(packageType)) return null;
+  for (const page of doc.pages.slice(0, FRONT_MATTER_PAGES)) {
+    const text = page.text;
+    if (/\b(?:array|network|polar(?:ized|ised)|tantalum|electrolytic)\b/i.test(text)) continue;
+    const resistor = /\b(?:thin|thick)[ -]?film(?:[\s,]+[A-Za-z()-]+){0,4}\s+chip\s+resistors?\b/i.exec(text);
+    const capacitor = /\b(?:chip\s+)?(?:multilayer|monolithic)\s+(?:ceramic\s+)?(?:chip\s+)?capacitors?\b/i.exec(text);
+    const hit = resistor ?? capacitor;
+    if (hit) return { page: page.page, label: hit[0] };
+  }
+  return null;
+}
+
+/**
+ * Terminals for an unnumbered, single axial diode whose body mark establishes
+ * polarity.  Axial diode datasheets commonly name the two physical ends but do
+ * not assign lead numbers because the leads themselves are not numbered.  CAD
+ * still needs stable numbers, so use the industry CAD convention 1=K, 2=A and
+ * keep the cathode-band statement as the evidence that orients pad 1.  This is
+ * deliberately narrower than "two-pin semiconductor": arrays, bridges and
+ * packages without an explicit polarity mark stay on the pin-reading path.
+ */
+function markedAxialDiodeTerminals(
+  doc: DatasheetText,
+  packageType: string | undefined
+): { page: number; snippet: string } | null {
+  if (!packageType || !/\b(?:DO-?41|DO-?204AL)\b/i.test(packageType)) return null;
+  for (const page of doc.pages.slice(0, FRONT_MATTER_PAGES)) {
+    const text = page.text;
+    // An application footnote can mention a bridge rectifier on the same page
+    // as a datasheet whose own configuration table says "Single".  Classify
+    // the part from that explicit field; only use compound-device vocabulary
+    // as an exclusion when the document does not settle the configuration.
+    const explicitlySingle = /\bcircuit\s+configuration\b[^\n]{0,100}\bsingle\b/i.test(text);
+    if (!explicitlySingle && /\b(?:bridge\s+rectifier|diode\s+(?:array|network)|dual\s+(?:diode|rectifier))\b/i.test(text)) continue;
+    if (!/\b(?:diode|rectifier)\b/i.test(text)) continue;
+    // Vendors phrase the same body mark several ways: "polarity band denotes
+    // cathode", "cathode indicated by band", or "banded end is cathode".
+    // Requiring both concepts in one short sentence keeps an unrelated band or
+    // cathode rating from establishing orientation.
+    const polarity = /(?:\b(?:polarity|cathode)\b[^\n.]{0,80}\b(?:band|stripe|banded)\b|\b(?:band|stripe|banded)\b[^\n.]{0,80}\bcathode\b)/i.exec(text);
+    if (polarity) return { page: page.page, snippet: polarity[0] };
+  }
+  return null;
+}
+
+/**
  * The starting record: everything unknown, except what is not read from the
  * part's own description.
  *
@@ -132,8 +192,13 @@ export function buildPartRecord(
   // Falling back rather than merging is deliberate. A union would put the
   // siblings straight back in, which is the thing this fixes.
   const orderable = findOrderablePackages(doc.text, named);
+  const subjectPackages = findSubjectPackages(doc.text, named);
   const packageVariants =
-    orderable.length > 0 ? orderable : findPackageVariants(doc.text, frontMatterEnd(doc));
+    subjectPackages.length > 0
+      ? subjectPackages
+      : orderable.length > 0
+        ? orderable
+        : findPackageVariants(doc.text, frontMatterEnd(doc));
 
   const hinted = hints?.packageType?.trim();
   const packageType =
@@ -152,6 +217,39 @@ export function buildPartRecord(
     notes.push(`Only the first ${doc.pages.length} pages were parsed (page cap ${MAX_PAGES}).`);
   }
 
+  const symmetric = symmetricChipTerminals(doc, hinted);
+  if (symmetric) {
+    notes.push(
+      `The document identifies a non-polar ${symmetric.label} in the standard ${hinted} two-ended chip package. ` +
+        `Its interchangeable ends are represented as terminals 1 and 2; no electrical polarity or function was inferred.`
+    );
+  }
+  const symmetricCitation = symmetric
+    ? { page: symmetric.page, snippet: symmetric.label, region: null }
+    : null;
+  const diode = symmetric ? null : markedAxialDiodeTerminals(doc, hinted);
+  if (diode) {
+    notes.push(
+      `The document identifies one axial diode and marks its cathode end. Its otherwise unnumbered leads use ` +
+        `the CAD convention 1=K (banded cathode) and 2=A, so the symbol and footprint preserve the stated polarity.`
+    );
+  }
+  const diodeCitation = diode
+    ? { page: diode.page, snippet: diode.snippet, region: null }
+    : null;
+  const derivedPins = symmetric
+    ? [
+        { number: "1", name: "1", electricalType: "passive" as const },
+        { number: "2", name: "2", electricalType: "passive" as const }
+      ]
+    : diode
+      ? [
+          { number: "1", name: "K", electricalType: "passive" as const },
+          { number: "2", name: "A", electricalType: "passive" as const }
+        ]
+      : null;
+  const derivedCitation = symmetricCitation ?? diodeCitation;
+
   return {
     id: randomUUID(),
     partNumber: named
@@ -166,8 +264,18 @@ export function buildPartRecord(
       ? { page: printed.page, valuesMm: printed.dimensions.map((dimension) => dimension.valueMm) }
       : null,
     exposedPad: false,
-    pinCount: unknown<number>(),
-    pins: unknown<PinRecord[]>(),
+    exposedPadPin: null,
+    pinCount: derivedPins
+      ? { value: 2, confidence: 1, method: "deterministic", citation: derivedCitation }
+      : unknown<number>(),
+    pins: derivedPins
+      ? {
+          value: derivedPins,
+          confidence: 1,
+          method: "deterministic",
+          citation: derivedCitation
+        }
+      : unknown<PinRecord[]>(),
     dimensions: {
       bodyLengthMm: unknown<number>(),
       bodyWidthMm: unknown<number>(),
@@ -195,8 +303,11 @@ export function buildPartRecord(
       solderMaskDefined: unknown<"solder-mask-defined" | "non-solder-mask-defined">(),
       thermalPadLengthMm: unknown<number>(),
       thermalPadWidthMm: unknown<number>(),
+      thermalPadRotationDeg: unknown<number>(),
       thermalViaDiameterMm: unknown<number>(),
-      thermalViaPitchMm: unknown<number>()
+      thermalViaPitchMm: unknown<number>(),
+      auxiliaryPads: unknown(),
+      terminalPads: unknown()
     },
     radiation: {
       tid: unknown<string>(),

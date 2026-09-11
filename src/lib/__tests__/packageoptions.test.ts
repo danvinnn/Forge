@@ -271,8 +271,12 @@ test("a sibling package does not inherit the resolved package's printed land pat
     "a package whose own drawing was never read cannot claim to ship"
   );
   assert.ok(
-    by.get("VSSOP-8")!.needs.some((need) => need.field === "mounting"),
-    "and it first establishes holes versus surface lands rather than borrowing either"
+    !by.get("VSSOP-8")!.needs.some((need) => need.field === "mounting"),
+    "VSSOP itself establishes surface mounting, so the user is not asked a false question"
+  );
+  assert.ok(
+    by.get("VSSOP-8")!.needs.some((need) => need.field === "landPadLengthMm"),
+    "but the sibling still needs its own copper dimensions rather than borrowing the SOIC pattern"
   );
 });
 

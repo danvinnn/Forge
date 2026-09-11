@@ -80,6 +80,8 @@ gcp-key.json
 .mutation-journal.json
 .bench-browser.log
 .bench-browser-server.log
+.universe-results/
+.universe-e2e-results/
 
 # One-off inspection scripts. Never part of the product.
 .scratch

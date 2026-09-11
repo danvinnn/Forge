@@ -51,7 +51,10 @@ export interface GainEquationEvidence {
  * magnitude from code. Distinct constants make the result ambiguous and are
  * refused rather than selecting one mode silently.
  */
-export function gainEquationFromText(pages: Array<{ page: number; text: string }>): GainEquationEvidence | null {
+export function gainEquationFromText(
+  pages: Array<{ page: number; text: string }>,
+  partNumber?: string
+): GainEquationEvidence | null {
   const all = pages.map((page) => page.text).join("\n");
   if (!/\b(?:instrumentation\s+amplifier|in-amp)\b/i.test(all)) return null;
 
@@ -61,27 +64,42 @@ export function gainEquationFromText(pages: Array<{ page: number; text: string }
     new RegExp(String.raw`(?:\bG\b|\bGAIN\b)\s*=\s*1\s*\+\s*\(?\s*${numberAndUnit}\s*\)?\s*\/\s*${rg}`, "gi"),
     new RegExp(String.raw`${rg}\s*=\s*\(?\s*${numberAndUnit}\s*\)?\s*\/\s*\(?\s*(?:\bG\b|\bGAIN\b)\s*-\s*1\s*\)?`, "gi")
   ];
-  const found: GainEquationEvidence[] = [];
+  const found: Array<GainEquationEvidence & { exactPartRow: boolean }> = [];
+  const partKey = partNumber?.replace(/[^A-Za-z0-9]/g, "").toUpperCase() ?? null;
 
   for (const page of pages) {
-    const normalized = page.text.replace(/[−–—]/g, "-").replace(/\s+/g, " ");
-    for (const pattern of patterns) {
-      for (const match of normalized.matchAll(pattern)) {
+    const normalizedLines = page.text.replace(/[−–—]/g, "-").split(/\r?\n/).map((line) => line.replace(/\s+/g, " "));
+    for (const normalized of normalizedLines) {
+      for (const pattern of patterns) {
+        for (const match of normalized.matchAll(pattern)) {
         const value = Number(match[1]);
         const prefix = match[2];
         const scale = prefix === "k" || prefix === "K" ? 1e3 : prefix === "M" ? 1e6 : prefix === "m" ? 1e-3 : 1;
         const resistance = value * scale;
         if (!(resistance > 0) || !Number.isFinite(resistance)) continue;
-        found.push({ resistanceOhm: resistance, printed: value, unit: `${prefix}${match[3]}`, page: page.page, equation: match[0] });
+          const lineKey = normalized.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+          found.push({
+            resistanceOhm: resistance,
+            printed: value,
+            unit: `${prefix}${match[3]}`,
+            page: page.page,
+            equation: match[0],
+            exactPartRow: Boolean(partKey && lineKey.includes(partKey))
+          });
+        }
       }
     }
   }
-  const magnitudes = new Set(found.map((item) => item.resistanceOhm));
-  return magnitudes.size === 1 ? found[0] : null;
+  const exact = found.filter((item) => item.exactPartRow);
+  const candidates = exact.length > 0 ? exact : found;
+  const magnitudes = new Set(candidates.map((item) => item.resistanceOhm));
+  if (magnitudes.size !== 1) return null;
+  const { exactPartRow: _exactPartRow, ...answer } = candidates[0];
+  return answer;
 }
 
 /** Scans the native PDF text for the instrumentation-amplifier gain law. */
-export async function readGainEquation(pdfBytes: ArrayBuffer): Promise<GainEquationEvidence | null> {
+export async function readGainEquation(pdfBytes: ArrayBuffer, partNumber?: string): Promise<GainEquationEvidence | null> {
   let mupdf: typeof import("mupdf");
   try { mupdf = await import("mupdf"); } catch { return null; }
   let document: ReturnType<typeof mupdf.Document.openDocument>;
@@ -94,12 +112,17 @@ export async function readGainEquation(pdfBytes: ArrayBuffer): Promise<GainEquat
       try {
         const structured = JSON.parse(document.loadPage(index).toStructuredText().asJSON()) as { blocks?: MuPdfBlock[] };
         const lines = (structured.blocks ?? []).flatMap((block) => block.lines ?? []).map((line) => line.text ?? "").filter(Boolean);
-        // Adjacent lines are joined as well: PDF producers often split the
-        // numerator, slash and RG across separate text runs.
-        pages.push({ page: index + 1, text: [...lines, ...lines.slice(0, -1).map((line, at) => `${line} ${lines[at + 1]}`)].join("\n") });
+        // Join short row windows as well: PDF table producers routinely put the
+        // device name, description, equation and pin note in four separate text
+        // runs. Keeping the window bounded associates an equation with its row
+        // without pulling the neighbouring family member into the same claim.
+        const windows = lines.flatMap((_, at) => [2, 3, 4]
+          .filter((width) => at + width <= lines.length)
+          .map((width) => lines.slice(at, at + width).join(" ")));
+        pages.push({ page: index + 1, text: [...lines, ...windows].join("\n") });
       } catch { /* one unreadable page does not hide the rest */ }
     }
-    return gainEquationFromText(pages);
+    return gainEquationFromText(pages, partNumber);
   } finally {
     try { document.destroy(); } catch { /* process owns no persistent handle */ }
   }

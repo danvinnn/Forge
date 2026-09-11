@@ -120,6 +120,25 @@ test("a native PDF is one visual pass and does not request duplicate renders", (
   assert.match(prompt, /one entry per package/);
 });
 
+test("a rendered board layout explicitly asks for every auxiliary land", () => {
+  const doc = datasheetTextFromPages([
+    "ACME10 connector, 10 positions, 0.5 mm pitch.",
+    "RECOMMENDED PCB DIMENSIONS DIAGRAM. Two hold downs, 2 PLC."
+  ]);
+  const part = buildPartRecord(doc, "ACME10.pdf", undefined, { packageType: "FFC/FPC connector" });
+  const request = buildExtractionRequest(part, doc, "ACME10.pdf", "ACME10");
+  assert.ok(request);
+
+  const prompt = buildPrompt({
+    ...request,
+    images: [{ page: 2, mimeType: "image/png", base64: "AA==", widthPx: 100, heightPx: 100 }]
+  });
+  assert.match(prompt, /non-numbered copper lands and holes/);
+  assert.match(prompt, /dimensioned OUTER land\s+boundary is the copper shape/);
+  assert.match(prompt, /Symmetric `2 PLC` lands must become two entries/);
+  assert.match(prompt, /answer it explicitly/);
+});
+
 // --- selecting the page a DRAWING is on -------------------------------------
 //
 // These guard the three defects that kept the package drawing out of the model's
@@ -128,29 +147,18 @@ test("a native PDF is one visual pass and does not request duplicate renders", (
 
 
 
-test("a resolved package is a SUGGESTION the model may reject", () => {
-  // This asserted the opposite until 2026-08-11. The prompt used to read "This
-  // part is in the X package ... report values for THIS one only", where X came
-  // from a text scan, so when the scan was wrong the model read the wrong
-  // drawing faithfully. It had been told the answer instead of asked the
-  // question, and that was the last place the deterministic pass gave orders.
-  //
-  // The alternatives now go WITH the suggestion, because a model that may reject
-  // a package needs to see what it can reject it in favour of.
+test("a user-selected package cannot be replaced with an easier sibling drawing", () => {
   const doc = datasheetTextFromPages([
     "ACME358 Op-amp in an 8-pin SOIC package. Also available in TSSOP-8 and VSSOP-8."
   ]);
-  const part = buildPartRecord(doc, "ACME358.pdf");
+  const part = buildPartRecord(doc, "ACME358.pdf", undefined, { packageType: "TSSOP-8" });
   const request = buildExtractionRequest(part, doc, "ACME358.pdf", "ACME358");
   assert.ok(request);
 
   const prompt = buildPrompt(request);
-  if (part.packageType.value !== null) {
-    assert.match(prompt, /suggests the package is/, "offered as a suggestion");
-    assert.match(prompt, /that scan is often wrong/, "and openly distrusted");
-    assert.match(prompt, /Decide for yourself/, "the model decides");
-    assert.doesNotMatch(prompt, /report values for THIS one only/, "no longer an order");
-  }
+  assert.match(prompt, /user selected package "TSSOP-8"/);
+  assert.match(prompt, /THAT package only/);
+  assert.match(prompt, /Do not substitute a sibling package/);
 });
 
 

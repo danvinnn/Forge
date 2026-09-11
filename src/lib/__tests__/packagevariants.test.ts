@@ -6,8 +6,32 @@ import {
   pinTableFor,
   findOrderablePackages,
   findPackageVariants,
-  namesPackageFamily
+  findSubjectPackages,
+  namesPackageFamily,
+  mountingFromPackageName,
+  leadFormFromPackageName
 } from "../packagevariants";
+
+test("standard package names imply mounting only when the technology is unambiguous", () => {
+  for (const name of ["6-bump WLP", "UFBGA176", "QFN-24", "0603", "SOT-23"]) {
+    assert.equal(mountingFromPackageName(name), "smd", name);
+  }
+  for (const name of ["PDIP-8", "DO-204AL", "DO-41"]) {
+    assert.equal(mountingFromPackageName(name), "through-hole", name);
+  }
+  assert.equal(mountingFromPackageName("transformer"), null);
+  assert.equal(mountingFromPackageName("custom module"), null);
+});
+
+test("standard package families imply only their defined lead form", () => {
+  for (const name of ["TQFP (PBS)", "LQFP64", "SOIC (D)"]) {
+    assert.equal(leadFormFromPackageName(name), "gullwing", name);
+  }
+  for (const name of ["UFBGA176+25", "WQFN (RSN)", "LGA-14"]) {
+    assert.equal(leadFormFromPackageName(name), "nolead", name);
+  }
+  assert.equal(leadFormFromPackageName("custom connector"), null);
+});
 
 /**
  * `packageType` was null on 15 of the 23 parts that could not export, which made
@@ -39,6 +63,39 @@ test("the glued form is a designator", () => {
   });
   assert.equal(all("Flat-16P")[0].leadCount, 16);
   assert.equal(all("available in LQFP100 and LQFP144").length, 2);
+});
+
+test("modern grid and fine-pitch package names survive the cover-page scan", () => {
+  const variants = all("UFBGA169 WLCSP80 TFBGA225 VFQFPN68 and 9-Bump WLP");
+  assert.deepEqual(variants.map((item) => item.family), ["UFBGA", "WLCSP", "TFBGA", "VFQFPN", "WLP"]);
+  assert.deepEqual(variants.map((item) => item.leadCount), [169, 80, 225, 68, 9]);
+});
+
+test("an additive grid-ball designation preserves its full physical count", () => {
+  const variants = all("Available in UFBGA176+25 for a total of 201 physical balls.");
+  assert.deepEqual(variants.filter((item) => item.family === "UFBGA").map((item) => [item.designator, item.leadCount]), [
+    ["UFBGA176+25", 201]
+  ]);
+  assert.equal(declaredLeadCount("UFBGA176+25"), 201);
+});
+
+test("a spelled-out bump package keeps the family in parentheses", () => {
+  const variants = all("Offered in a 1.2 mm x 0.8 mm, 6-bump wafer-level package (WLP).");
+  assert.ok(variants.some((variant) => variant.family === "WLP" && variant.leadCount === 6));
+  assert.equal(variants.find((variant) => variant.family === "WLP")?.designator, "6-bump WLP");
+});
+
+test("a package size may sit between an explicit lead count and family", () => {
+  const variants = all("Available in a small 16-Lead 3mm × 3mm LQFN Package.");
+  assert.ok(variants.some((variant) => variant.family === "LQFN" && variant.leadCount === 16));
+});
+
+test("explicit subject prose does not pool a sibling's package", () => {
+  const text =
+    "The MAX40025 is offered in a 1.218 mm x 0.818 mm, 6-bump wafer-level package (WLP), " +
+    "while the MAX40026 is available in a 2 mm x 2 mm 8-pin TDFN package.";
+  const variants = findSubjectPackages(text, "MAX40025");
+  assert.deepEqual(variants.map((variant) => [variant.family, variant.leadCount]), [["WLP", 6]]);
 });
 
 test("a short hyphenated prefix is kept with the family", () => {

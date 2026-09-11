@@ -512,6 +512,10 @@ function confirmBody(part: ResolvedPart): Confirmation | null {
     );
   }
 
+  // No-lead terminals are under the package, so an inner terminal span is not
+  // evidence that the body was misread.  Gull-wing and straight leads leave
+  // the body and retain the original contradiction check.
+  if (part.dimensions.leadForm === "nolead") return null;
   if (span && span.maxMm >= across) return null;
   if (span) {
     return flagged(

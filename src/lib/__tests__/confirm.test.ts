@@ -201,6 +201,21 @@ test("an exposed pad is asked about only when the package has one", () => {
   assert.ok(pad, "a soldered, mandatory feature is always accounted for");
 });
 
+test("a no-lead terminal span inside the body does not flag the body", () => {
+  const noLead = part({
+    packageType: "LGA-8",
+    dimensions: {
+      ...part().dimensions,
+      leadForm: "nolead",
+      bodyLengthMm: 2.5,
+      bodyWidthMm: 2.5,
+      leadSpanMm: { minMm: 2.3, maxMm: 2.3 }
+    }
+  });
+  const body = confirmations(noLead, geometry(AGREES), null).items.find((item) => item.id === "body");
+  assert.equal(body, undefined);
+});
+
 test("missing corroboration does not manufacture review findings", () => {
   const blind = part({
     vendorLandPattern: null,

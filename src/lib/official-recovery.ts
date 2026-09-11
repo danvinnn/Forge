@@ -1,7 +1,7 @@
 import type { Intent } from "./intent";
 
 export interface RecoverableOfficialResource {
-  kind: "spice" | "cad" | "step" | "package-drawing" | "application-note";
+  kind: "spice" | "cad" | "step" | "pinout" | "package-drawing" | "application-note";
   url: string;
 }
 
@@ -26,7 +26,7 @@ function containsSequence(haystack: readonly string[], needle: readonly string[]
  */
 export function recognizedOfficialArtifact<T extends OfficialArtifactCandidate>(
   candidates: readonly T[],
-  kind: "cad" | "step" | "spice",
+  kind: "cad" | "step" | "spice" | "pinout",
   identity: { partNumber?: string | null; packageType?: string | null }
 ): T | null {
   if (candidates.length === 1) return candidates[0];
@@ -40,7 +40,7 @@ export function recognizedOfficialArtifact<T extends OfficialArtifactCandidate>(
     : [];
   if (partMatches.length === 1) return partMatches[0].candidate;
 
-  if ((kind === "cad" || kind === "step") && packageTokens.length > 0) {
+  if ((kind === "cad" || kind === "step" || kind === "pinout") && packageTokens.length > 0) {
     const pool = partMatches.length > 1 ? partMatches : names;
     const packageMatches = pool.filter((entry) => packageTokens.every((token) => entry.tokens.includes(token)));
     if (packageMatches.length === 1) return packageMatches[0].candidate;
@@ -56,7 +56,7 @@ export function recognizedOfficialArtifact<T extends OfficialArtifactCandidate>(
 export function automaticOfficialImports<T extends RecoverableOfficialResource>(
   resources: readonly T[],
   intent: Intent,
-  have: { cad: boolean; spice: boolean; step?: boolean },
+  have: { cad: boolean; spice: boolean; step?: boolean; pinout?: boolean },
   attempted: ReadonlySet<string>
 ): T[] {
   const wantsCad = intent === "cad" || intent === "both";
@@ -65,6 +65,7 @@ export function automaticOfficialImports<T extends RecoverableOfficialResource>(
     if (attempted.has(resource.url)) return false;
     if (resource.kind === "cad") return wantsCad && !have.cad;
     if (resource.kind === "step") return wantsCad && !have.step;
+    if (resource.kind === "pinout") return wantsCad && !have.pinout;
     if (resource.kind === "spice") return wantsSpice && !have.spice;
     return false;
   });

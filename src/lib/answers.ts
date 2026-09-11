@@ -15,7 +15,7 @@
 
 import { isRangeField, parseRange } from "./review";
 import type { RequiredInput } from "./exporters";
-import type { Extracted, PartRecord } from "./types";
+import { terminalPadSchema, type Extracted, type PartRecord, type TerminalPadRecord } from "./types";
 
 /** Largest span the export route accepts, mirrored so the UI refuses it first. */
 export const MAX_LEAD_SPAN_MM = 200;
@@ -30,6 +30,23 @@ export const MAX_LEAD_SPAN_MM = 200;
  * rather than one number for all of them, which is what let the two drift.
  */
 export const MAX_FORMED_CONTACT_MM = 5;
+
+/**
+ * Questions visible on the CAD screen.
+ *
+ * Before an export, the package chooser provides a useful prediction. Once the
+ * server has answered an export attempt, even an empty question list is an
+ * authoritative answer. Falling back to the prediction in that state revives
+ * stale, already-answered fields after a terminal validation refusal.
+ */
+export function questionsToShow(
+  serverAnswered: boolean,
+  serverQuestions: readonly RequiredInput[],
+  predictedQuestions: readonly RequiredInput[]
+): readonly RequiredInput[] {
+  if (serverQuestions.length > 0) return serverQuestions;
+  return serverAnswered ? [] : predictedQuestions;
+}
 
 export type Judged<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -88,8 +105,28 @@ export function correctionFor(field: string, label: string, raw: string): Judged
  * Checked here so a typo is caught beside the box rather than as a 400 from the
  * route.
  */
-export function answerFor(need: RequiredInput, raw: string): Judged<number | string> {
+export function answerFor(need: RequiredInput, raw: string): Judged<number | string | TerminalPadRecord[]> {
   const text = raw.trim();
+
+  if (need.unit === "terminal-layout") {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(text);
+    } catch {
+      return { ok: false, message: "Paste the numbered-land layout as a JSON array." };
+    }
+    const parsed = terminalPadSchema.array().min(1).max(512).safeParse(decoded);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        message: "Each land needs number, xMm, yMm, widthMm, heightMm, and shape (rect, roundrect, circle, or oval)."
+      };
+    }
+    if (new Set(parsed.data.map((pad) => pad.number)).size !== parsed.data.length) {
+      return { ok: false, message: "Each terminal number must appear exactly once." };
+    }
+    return { ok: true, value: parsed.data };
+  }
 
   if (need.unit === "choice") {
     const allowed = need.choices?.map((choice) => choice.value) ?? [];

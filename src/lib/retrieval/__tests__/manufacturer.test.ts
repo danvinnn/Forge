@@ -51,6 +51,11 @@ test("tries the family variant so an ordering suffix does not cause a miss", () 
   assert.ok(urls.some((u) => u.includes("lmp7704.pdf")), "expected a bare LMP7704 candidate");
 });
 
+test("tries the verified Maxim adjacent-device family filename", () => {
+  const urls = claimedUrls("MAX40025", "Analog Devices");
+  assert.ok(urls.includes("https://www.analog.com/media/en/technical-documentation/data-sheets/max40025a-max40026.pdf"));
+});
+
 test("claims nothing for a rad-hard vendor with no derivable pattern", () => {
   // VORAGO's datasheet is published as VA10820_DS_12.pdf with an embedded doc revision, which
   // cannot be built from the part number. Claiming it would mean guessing, so we claim nothing and

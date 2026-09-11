@@ -53,7 +53,11 @@
     "bench:model-capabilities": "tsx --test src/lib/spice/__tests__/opportunity.test.ts src/lib/spice/__tests__/vendor.test.ts src/lib/spice/__tests__/model-route.test.ts",
     "bench:model-release": "npm run bench:model-capabilities && npm run bench:model-coverage && npm run bench:ltspice",
     "bench:release": "npm test && npm run lint && npm run build && npm run bench:cad-release && npm run bench:model-release && npm run bench:browser -- --spice --full",
-    "bench:ltspice": "tsx src/lib/__bench__/ltspice.ts"
+    "bench:ltspice": "tsx src/lib/__bench__/ltspice.ts",
+    "bench:universe": "tsx src/lib/__bench__/universe.ts",
+    "bench:universe:gate": "tsx src/lib/__bench__/universe-evaluate.ts",
+    "bench:universe:e2e": "tsx src/lib/__bench__/universe-e2e.ts",
+    "bench:universe:e2e:gate": "tsx src/lib/__bench__/universe-e2e-evaluate.ts"
   },
   "dependencies": {
     "@google/genai": "^2.17.1",

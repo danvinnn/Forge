@@ -745,6 +745,14 @@ export function AskPanel({
                         <option key={choice.value} value={choice.value}>{choice.label}</option>
                       ))}
                     </select>
+                  ) : need.unit === "terminal-layout" ? (
+                    <textarea
+                      id={`need-${need.field}`}
+                      rows={6}
+                      value={values[need.field] ?? ""}
+                      placeholder='[{"number":"1","xMm":-0.325,"yMm":0.48,"widthMm":0.26,"heightMm":0.24,"shape":"rect"}]'
+                      onChange={(event) => onChange(need.field, event.target.value)}
+                    />
                   ) : (
                     <input
                       id={`need-${need.field}`}

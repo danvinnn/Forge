@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import JSZip from "jszip";
-import { createExportZip, FootprintUnavailableError, GeneratorUnavailableError } from "../exporters";
+import { buildFootprintGeometry, createExportZip, FootprintUnavailableError, GeneratorUnavailableError } from "../exporters";
 import { assessAssurance } from "../assurance";
 import { type PinRecord, type ResolvedPart } from "../types";
 
@@ -85,6 +85,63 @@ async function filesFrom(part: ResolvedPart): Promise<Map<string, string>> {
   return out;
 }
 
+test("a rotated exposed pad fits between explicitly placed corner lands and carries its rotation", async () => {
+  const base = soicPart();
+  const part: ResolvedPart = {
+    ...base,
+    packageType: "XDFN4",
+    exposedPad: true,
+    pinCount: 4,
+    pins: pins(4),
+    dimensions: {
+      ...base.dimensions,
+      bodyLengthMm: 1,
+      bodyWidthMm: 1,
+      bodyHeightMm: 0.43,
+      pitchMm: 0.65,
+      leadCount: 4,
+      leadWidthMm: { minMm: 0.15, maxMm: 0.25 },
+      leadSpanMm: { minMm: 0.9, maxMm: 1.1 },
+      leadContactMm: { minMm: 0.2, maxMm: 0.3 },
+      landPadLengthMm: null,
+      landPadWidthMm: null,
+      landSpanMm: null,
+      leadSides: null,
+      leadForm: "nolead",
+      mounting: "smd",
+      thermalPadLengthMm: 0.48,
+      thermalPadWidthMm: 0.48,
+      thermalPadRotationDeg: 45,
+      terminalPads: [
+        { number: "1", xMm: -0.325, yMm: 0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" },
+        { number: "2", xMm: -0.325, yMm: -0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" },
+        { number: "3", xMm: 0.325, yMm: -0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" },
+        { number: "4", xMm: 0.325, yMm: 0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" }
+      ]
+    }
+  };
+
+  const geometry = buildFootprintGeometry(part, "B");
+  const thermal = geometry.pads.find((pad) => pad.number === "5");
+  assert.ok(thermal);
+  assert.equal(thermal.rotationDeg, 45);
+  assert.equal(thermal.shape, "rect");
+  assert.ok(thermal.pasteApertures?.every((aperture) => aperture.rotationDeg === 45));
+  assert.equal(geometry.provenance.arrangement, "explicit-numbered-lands");
+  await createExportZip(part, "kicad");
+  await createExportZip(part, "altium");
+});
+
+test("an inspected empty explicit-pad list still uses the regular row placer", () => {
+  const base = soicPart();
+  const geometry = buildFootprintGeometry({
+    ...base,
+    dimensions: { ...base.dimensions, terminalPads: [] },
+  }, "B");
+  assert.equal(geometry.pads.length, 8);
+  assert.equal(geometry.provenance.arrangement, "dual");
+});
+
 /** Pad number to (x, y), parsed back out of the generated footprint. */
 function padPositions(footprint: string): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
@@ -118,6 +175,94 @@ test("dual-row pads are numbered counterclockwise, not down both sides", async (
   assert.equal(four.y, five.y, "pin 4 and pin 5 sit on the same row");
   assert.ok(four.y > one.y, "numbering runs down the left side");
   assert.ok(five.y > eight.y, "and back UP the right side, which is the whole point");
+});
+
+test("a three-pin SOT places its singleton lead on the centre line without asking for a nonexistent slot", async () => {
+  const base = soicPart();
+  const part: ResolvedPart = {
+    ...base,
+    partNumber: "BSS138P",
+    packageType: "SOT-23-3",
+    pinCount: 3,
+    pins: pins(3),
+    vendorLandPattern: null,
+    dimensions: {
+      ...base.dimensions,
+      bodyLengthMm: 2.9,
+      bodyWidthMm: 1.3,
+      pitchMm: 0.95,
+      leadCount: 3,
+      leadWidthMm: null,
+      leadSpanMm: null,
+      landPadLengthMm: null,
+      landPadWidthMm: null,
+      landSpanMm: null,
+      vacantLeadSlot: null
+    }
+  };
+  const bundle = await createExportZip(part, "kicad", {
+    supplied: { landPadLengthMm: 1, landPadWidthMm: 0.6, landSpanMm: 2.8 }
+  });
+  const zip = await JSZip.loadAsync(bundle.buffer);
+  const files = new Map<string, string>();
+  for (const name of Object.keys(zip.files)) files.set(name, await zip.files[name].async("string"));
+  const footprint = [...files.entries()].find(([name]) => name.endsWith(".kicad_mod"))?.[1];
+  assert.ok(footprint);
+  const at = padPositions(footprint);
+  assert.equal(at.size, 3);
+  assert.equal(at.get("3")?.y, 0, "the one-lead row is centred between pins 1 and 2");
+  assert.equal(at.get("1")?.y, -0.475);
+  assert.equal(at.get("2")?.y, 0.475);
+});
+
+test("a three-sided module uses the drawing's per-side counts", async () => {
+  const base = soicPart();
+  const part: ResolvedPart = {
+    ...base,
+    partNumber: "MODULE40",
+    packageType: "castellated module",
+    pinCount: 40,
+    pins: pins(40),
+    vendorLandPattern: null,
+    dimensions: {
+      ...base.dimensions,
+      bodyLengthMm: 18,
+      bodyWidthMm: 25.5,
+      pitchMm: 1.27,
+      leadCount: 40,
+      leadSides: 3,
+      leadsPerSide: "15,11,14",
+      leadWidthMm: null,
+      leadSpanMm: null,
+      landPadLengthMm: null,
+      landPadWidthMm: null,
+      landSpanMm: null,
+      landSpanCrossMm: null
+    }
+  };
+  const bundle = await createExportZip(part, "kicad", {
+    supplied: {
+      landPadLengthMm: 1.5,
+      landPadWidthMm: 0.9,
+      landSpanMm: 17.5,
+      landSpanCrossMm: 17.5,
+      leadSides: 3,
+      leadsPerSide: "15,11,14"
+    }
+  });
+  const zip = await JSZip.loadAsync(bundle.buffer);
+  const files = new Map<string, string>();
+  for (const name of Object.keys(zip.files)) files.set(name, await zip.files[name].async("string"));
+  const footprint = [...files.entries()].find(([name]) => name.endsWith(".kicad_mod"))?.[1];
+  assert.ok(footprint);
+  const at = padPositions(footprint);
+  assert.equal(at.size, 40);
+  assert.ok(at.get("1")!.x < 0 && at.get("15")!.x < 0);
+  assert.ok(at.get("16")!.y > 0 && at.get("26")!.y > 0);
+  assert.ok(at.get("27")!.x > 0 && at.get("40")!.x > 0);
+  assert.equal(at.get("15")!.y, at.get("16")!.y, "left row meets the bottom row");
+  assert.equal(at.get("26")!.y, at.get("27")!.y, "bottom row meets the right row");
+  assert.equal(new Set([...at.values()].map(({ x, y }) => `${x},${y}`)).size, 40);
 });
 
 test("user-supplied CAD values never masquerade as datasheet readings", async () => {
@@ -156,6 +301,7 @@ test("user-supplied CAD values never masquerade as datasheet readings", async ()
 
 test("an unread mounting style is asked, never interpreted as surface mount", async () => {
   const uncertain = soicPart();
+  uncertain.packageType = "custom package";
   uncertain.dimensions = { ...uncertain.dimensions, leadForm: null, mounting: null };
   await assert.rejects(
     () => createExportZip(uncertain, "kicad"),
@@ -177,6 +323,31 @@ test("an unread mounting style is asked, never interpreted as surface mount", as
   });
   assert.equal(built.footprint.userSupplied?.mounting, "smd");
   assert.equal(built.footprint.corroboration.from, "user");
+});
+
+test("a two-ended chip needs no fictitious along-row pitch", async () => {
+  const chip = soicPart();
+  chip.packageType = "0603";
+  chip.pinCount = 2;
+  chip.pins = chip.pins.slice(0, 2).map((pin, index) => ({
+    ...pin,
+    number: String(index + 1),
+    name: String(index + 1),
+    electricalType: "passive"
+  }));
+  chip.dimensions = {
+    ...chip.dimensions,
+    mounting: null,
+    leadForm: null,
+    leadSides: null,
+    pitchMm: null,
+    landPadLengthMm: 1,
+    landPadWidthMm: 0.9,
+    landSpanMm: 1.5
+  };
+  const built = await createExportZip(chip, "kicad");
+  assert.equal(built.footprint.arrangement, "dual");
+  assert.equal(built.footprint.pitchMm, 0);
 });
 
 test("the symbol places every pin on the side its number belongs to", async () => {

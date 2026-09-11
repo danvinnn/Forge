@@ -62,10 +62,10 @@ const PACKAGE_FAMILIES = [
   // the behaviour to WANT, not a limitation to route around. An HTSSOP-28 has a
   // 9.70 x 6.40 body and MO-153 AA is a 4.4 mm one, so handing it the TSSOP land
   // pattern would be this table's worst answer; a test pins that refusal.
-  "HVSSOP", "HTSSOP", "FLATPACK", "MINISO", "DSBGA", "SBDIP", "VSSOP", "LFCSP", "X2SON",
+  "HVSSOP", "HTSSOP", "FLATPACK", "MINISO", "DSBGA", "SBDIP", "VSSOP", "LFCSP", "LQFN", "X2SON",
   "TSSOP", "HTQFP", "CQFP", "PQFP", "TQFP", "LQFP", "VQFN", "WQFN", "UQFN",
-  "CDIP", "PDIP", "GDIP", "LCCC", "CLCC", "PLCC", "FBGA", "CBGA", "TBGA",
-  "WCSP", "MSOP", "SSOP", "TSOT", "USON", "VSON", "WSON", "SOIC", "FLAT",
+  "CDIP", "PDIP", "GDIP", "LCCC", "CLCC", "PLCC", "UFBGA", "TFBGA", "FBGA", "CBGA", "TBGA",
+  "VFQFPN", "WLCSP", "WCSP", "WLP", "TDFN", "MSOP", "SSOP", "TSOT", "USON", "VSON", "WSON", "SOIC", "FLAT",
   // `LGA` is the land grid array, and it was the second family the corpus prints
   // that this list did not have. Every MEMS sensor ships in one: a LIS3DH is an
   // LGA-16, an LSM6DSO an LGA-14, an ADXL345 an LGA-14. Missing it, those parts
@@ -180,6 +180,8 @@ export function familyToken(name: string): string | null {
 interface DesignatorForm {
   pattern: RegExp;
   countGroup: number | null;
+  /** A second explicitly printed terminal group, e.g. UFBGA176+25. */
+  additionalCountGroup?: number;
   familyGroup: number;
   /**
    * The qualifier this form allows between the count and the family, where it
@@ -209,6 +211,9 @@ interface DesignatorForm {
    * one when the digits are on the other side of that word.
    */
   countIsAnchored?: boolean;
+  /** Use a clean count/family label when drawing text is interleaved between
+   * a spelled-out package name and its parenthesised acronym. */
+  compactLabel?: boolean;
 }
 
 /**
@@ -245,13 +250,50 @@ const MATERIAL_WORD = /\b(?:ceramic|hermetic)\b/i;
  * table heading, and no dual or quad package has two or three leads anyway.
  */
 const GLUED_FORM: DesignatorForm = {
-  pattern: new RegExp(`\\b(${FAMILY_ALTERNATION})(\\d{1,3})\\b`, "g"),
+  pattern: new RegExp(`\\b(${FAMILY_ALTERNATION})(\\d{1,3})\\b(?!\\s*\\+\\s*\\d)`, "g"),
   countGroup: 2,
   familyGroup: 1,
   minCount: MIN_GLUED_COUNT
 };
 
 const FORMS: DesignatorForm[] = [
+  // Grid packages sometimes print functional balls plus auxiliary supply or
+  // ground balls as an additive count: `UFBGA176+25`.  The plus is part of the
+  // package identity and the physical footprint has 201 balls.  Collapsing it
+  // to UFBGA176 makes a correct 201-row BSDL appear to contradict the package.
+  {
+    pattern: new RegExp(`\\b(${FAMILY_ALTERNATION})(\\d{1,3})\\s*\\+\\s*(\\d{1,3})\\b`, "gi"),
+    countGroup: 2,
+    additionalCountGroup: 3,
+    familyGroup: 1,
+    minCount: MIN_GLUED_COUNT
+  },
+  // `16-Lead 3mm × 3mm LQFN`. A package size may sit between the vendor's
+  // explicit lead count and family; it is dimensional evidence, not an
+  // adjective or a second package. This tightly-shaped form avoids widening
+  // the ordinary count-to-family window across arbitrary prose.
+  {
+    pattern: new RegExp(
+      `\\b(\\d{1,3})[-\\s](?:lead|pin|ld)s?\\.?\\s+\\d+(?:\\.\\d+)?\\s*mm\\s*[x×]\\s*\\d+(?:\\.\\d+)?\\s*mm\\s+(${FAMILY_ALTERNATION})\\b`,
+      "gi"
+    ),
+    countGroup: 1,
+    familyGroup: 2,
+    countIsAnchored: true
+  },
+  // `6-bump wafer-level package (WLP)`. Some vendors spell out the package
+  // family and put its standard abbreviation in parentheses. The count is
+  // still explicit because their own word `bump` anchors it.
+  {
+    pattern: new RegExp(
+      `\\b(\\d{1,3})[-\\s](?:ball|bump)s?\\s+(?:wafer[-\\s]level|chip[-\\s]scale)\\s+package(?:(?!\\b(?:while|whereas)\\b)[\\s\\S]){0,60}?\\((${FAMILY_ALTERNATION})\\)`,
+      "gi"
+    ),
+    countGroup: 1,
+    familyGroup: 2,
+    countIsAnchored: true,
+    compactLabel: true
+  },
   // `16-Lead TSSOP`, `8-Pin SOIC`, `64 Ld EP-TQFP`, `16-Lead Ceramic SOIC`.
   //
   // One adjective is allowed between the count and the family and no more,
@@ -264,7 +306,7 @@ const FORMS: DesignatorForm[] = [
   // what makes `EP-TQFP` read as a TQFP.
   {
     pattern: new RegExp(
-      `\\b(\\d{1,3})[-\\s](?:lead|pin|ld)s?\\.?\\s+(?:([A-Za-z]{3,9})\\s+)?(?:[A-Za-z]{1,3}-)?(${FAMILY_ALTERNATION})\\b`,
+      `\\b(\\d{1,3})[-\\s](?:lead|pin|ld|ball|bump)s?\\.?\\s+(?:([A-Za-z]{3,9})\\s+)?(?:[A-Za-z]{1,3}-)?(${FAMILY_ALTERNATION})\\b`,
       "gi"
     ),
     countGroup: 1,
@@ -337,7 +379,9 @@ export function findPackageVariants(text: string, frontMatterEnd: number): Packa
       const adjective = form.adjectiveGroup ? match[form.adjectiveGroup] : undefined;
       if (adjective && namesPackageFamily(adjective)) continue;
 
-      const raw = form.countGroup === null ? null : Number(match[form.countGroup]);
+      const firstCount = form.countGroup === null ? null : Number(match[form.countGroup]);
+      const secondCount = form.additionalCountGroup ? Number(match[form.additionalCountGroup]) : 0;
+      const raw = firstCount === null ? null : firstCount + secondCount;
       // An outline number is a name, EXCEPT where the vendor anchored it to the
       // word "lead" or "pin" themselves. See `countIsAnchored`.
       const outlineNumbered = OUTLINE_NUMBERED.has(family) && form.countIsAnchored !== true;
@@ -356,7 +400,9 @@ export function findPackageVariants(text: string, frontMatterEnd: number): Packa
 
       // The designator as printed, trimmed of the separator the lone-count form
       // captures ahead of it.
-      const printedDesignator = match[0].replace(/^[^-\w.]/, "").replace(/\s+/g, " ").trim();
+      const printedDesignator = form.compactLabel && raw !== null
+        ? `${raw}-bump ${family}`
+        : match[0].replace(/^[^-\w.]/, "").replace(/\s+/g, " ").trim();
 
       // A MATERIAL qualifier printed ahead of the designator is part of it, and
       // dropping it is not cosmetic: the designator is what reaches the model's
@@ -425,6 +471,32 @@ export function findPackageVariants(text: string, frontMatterEnd: number): Packa
   }
 
   return [...found.values()].sort((left, right) => left.index - right.index);
+}
+
+/** Packages explicitly assigned to the requested subject in front-matter
+ * prose, as opposed to packages assigned to a sibling in the same datasheet.
+ *
+ * Example: "MAX40025 is offered in ... WLP, while MAX40026 is available in
+ * TDFN". Pooling the whole sentence asks a question the document answered.
+ * Restricted to explicit packaging verbs and stopped at contrast punctuation,
+ * so an incidental part mention cannot assign nearby package prose. */
+export function findSubjectPackages(text: string, partNumber: string): PackageVariant[] {
+  const subject = partNumber.trim();
+  if (subject.length < 3) return [];
+  const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `\\b${escaped}\\b.{0,100}?\\b(?:offered|available|supplied|housed|packaged)\\s+(?:in|as)\\b(.{0,260}?)(?=,?\\s*\\b(?:while|whereas)\\b|;|\\.(?:\\s+[A-Z]|$))`,
+    "gis"
+  );
+  const found = new Map<string, PackageVariant>();
+  for (const match of text.slice(0, 12_000).matchAll(pattern)) {
+    const phrase = match[1] ?? "";
+    for (const variant of findPackageVariants(phrase, phrase.length)) {
+      const key = `${variant.family}:${variant.leadCount ?? variant.designator}`;
+      if (!found.has(key)) found.set(key, variant);
+    }
+  }
+  return [...found.values()];
 }
 
 /**
@@ -875,6 +947,72 @@ export function sameDesignatorName(left: string, right: string): boolean {
   if (leftCode !== null && rightCode !== null && leftCode !== rightCode) return false;
 
   return true;
+}
+
+/**
+ * Mounting technology stated by a standard package designator.
+ *
+ * This is deliberately a small semantic vocabulary, not a package-size table.
+ * Names such as WLP, BGA and QFN define an array of lands on the board surface;
+ * names such as PDIP and DO-204AL define formed leads through holes.  Returning
+ * null for a name that can be sold either way keeps the caller on its normal
+ * evidence/question path.
+ */
+export function mountingFromPackageName(name: string | null): "smd" | "through-hole" | null {
+  if (!name) return null;
+  const upper = name.toUpperCase().replace(/_/g, "-");
+  const surface = new Set([
+    "UFBGA", "TFBGA", "FBGA", "CBGA", "TBGA", "DSBGA", "BGA", "LGA",
+    "WLCSP", "WCSP", "WLP", "LFCSP", "LQFN", "VQFN", "QFN", "WQFN", "UQFN",
+    "X2SON", "TDFN", "DFN", "USON", "VSON", "WSON", "SON", "HTSSOP", "HVSSOP",
+    "TSSOP", "VSSOP", "MSOP", "SSOP", "SOIC", "SOT", "TSOT",
+    "HTQFP", "CQFP", "PQFP", "TQFP", "LQFP", "QFP", "VFQFPN"
+  ]);
+  const parsedFamilies = new Set(findPackageVariants(upper, upper.length).map((variant) => variant.family));
+  const namedFamily = familyToken(upper);
+  if ((namedFamily && surface.has(namedFamily)) || [...parsedFamilies].some((family) => surface.has(family))) return "smd";
+  // Metric/imperial chip-size codes name two-ended surface-mount bodies.  A
+  // bare number elsewhere is not enough; require a common EIA/metric size.
+  if (isTwoEndedChipPackageName(upper)) return "smd";
+  if (/\b(?:PDIP|CDIP|CERDIP|SBDIP)\b/.test(upper)) return "through-hole";
+  if (/\b(?:DO-?41|DO-?204AL)\b/.test(upper)) return "through-hole";
+  return null;
+}
+
+/** Lead form stated by a standard surface-mount package family name. */
+export function leadFormFromPackageName(name: string | null): "gullwing" | "nolead" | null {
+  if (!name) return null;
+  const normalized = name.toUpperCase().replace(/_/g, "-");
+  const family = familyToken(normalized) ?? findPackageVariants(normalized, normalized.length)[0]?.family ?? null;
+  if (!family) return null;
+  const gullwing = new Set([
+    "HTQFP", "CQFP", "PQFP", "TQFP", "LQFP", "QFP", "HTSSOP", "HVSSOP",
+    "TSSOP", "VSSOP", "MSOP", "SSOP", "SOIC", "SOT", "TSOT", "SOP"
+  ]);
+  const nolead = new Set([
+    "UFBGA", "TFBGA", "FBGA", "CBGA", "TBGA", "DSBGA", "BGA", "LGA",
+    "WLCSP", "WCSP", "WLP", "LFCSP", "LQFN", "VQFN", "QFN", "WQFN",
+    "UQFN", "VFQFPN", "X2SON", "TDFN", "DFN", "USON", "VSON", "WSON", "SON"
+  ]);
+  if (gullwing.has(family)) return "gullwing";
+  if (nolead.has(family)) return "nolead";
+  return null;
+}
+
+/**
+ * Packages whose footprint is not complete until non-terminal board features
+ * have been inventoried.  These interface families commonly use soldered
+ * hold-downs, shield tabs or locating holes outside the numbered contacts.
+ * The function says only that the inventory is required; an empty inventory is
+ * valid when the recommended layout positively shows none.
+ */
+export function requiresAuxiliaryPadInventory(name: string | null): boolean {
+  return Boolean(name && /\b(?:connector|socket|header|card[ -]?edge|ffc|fpc)\b/i.test(name));
+}
+
+/** Standard rectangular chip sizes whose two terminations occupy opposite ends. */
+export function isTwoEndedChipPackageName(name: string | null): boolean {
+  return Boolean(name && /\b(?:0201|0402|0603|0805|1206|1210|1812|2010|2512)\b/i.test(name));
 }
 
 export function pinTableFor<

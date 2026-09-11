@@ -25,20 +25,25 @@
 //
 // Air-gap safe: no networking here. The model is injected.
 
-import { MAX_PAGES_TO_MODEL } from "./contracts";
+import { MAX_PAGES_TO_MODEL, type ExtractionField } from "./contracts";
 import { SecondPassFailedError } from "./contracts";
 import type { ExtractionModel, ExtractionRequest, ExtractionResult } from "./contracts";
 import type { DatasheetText } from "../pdftext";
 import type { PartRecord } from "../types";
 import { buildExtractionRequest, withRenderedPages } from "./request";
 import type { RenderedPage } from "../pagerender";
+import { findPackageDrawing } from "../packagedrawing";
 import { mergeModelValues, type MergeOutcome } from "./merge";
+import { pinoutEvidence } from "../pinevidence";
 import {
   declaredLeadCount,
   familyToken,
+  leadFormFromPackageName,
   namesPackageFamily,
   normalizeOutlineCode,
   packageCodeOf,
+  requiresAuxiliaryPadInventory,
+  sameDesignatorName,
   sameOutlineCode,
   spellOut,
   PACKAGE_FAMILY_PATTERN
@@ -1080,13 +1085,28 @@ function samePinNames(left: unknown, right: unknown): boolean {
 }
 
 /** Pages the model asked for, cleaned: real page numbers, in order, no repeats, capped. */
-function requestedPages(result: ExtractionResult, doc: DatasheetText): number[] {
+function requestedPages(result: ExtractionResult, doc: DatasheetText, requiredPage?: number): number[] {
   const exists = new Set(doc.pages.map((page) => page.page));
-  const asked = result.pagesWorthRendering ?? [];
-  const clean = [...new Set(asked)]
+  const clean = [...new Set(result.pagesWorthRendering ?? [])]
     .filter((page) => Number.isInteger(page) && exists.has(page))
     .sort((left, right) => left - right);
-  return clean.slice(0, MAX_RENDERED_PAGES);
+  if (requiredPage === undefined || !exists.has(requiredPage)) return clean.slice(0, MAX_RENDERED_PAGES);
+  return [requiredPage, ...clean.filter((page) => page !== requiredPage)].slice(0, MAX_RENDERED_PAGES);
+}
+
+function pinoutPages(doc: DatasheetText): number[] {
+  const heading = /\bpin\s*(?:connection|description|configuration|assignment|out|function)s?\b|\bterminal\s+(?:configuration|function)s?\b|\bpin\s+diagrams?\b/i;
+  const exists = new Set(doc.pages.map((page) => page.page));
+  const pages: number[] = [];
+  for (const page of doc.pages) {
+    if (!heading.test(page.text)) continue;
+    pages.push(page.page);
+    // Pin-function tables commonly continue onto the immediately following
+    // page without repeating their section heading. This expansion is used
+    // only after the broad read missed the required pin table.
+    if (exists.has(page.page + 1)) pages.push(page.page + 1);
+  }
+  return [...new Set(pages)].slice(0, 4);
 }
 
 // TWO WAYS OF CHOOSING PAGES FOR THE MODEL WERE MEASURED AND REJECTED, both on
@@ -1160,7 +1180,33 @@ export async function runExtraction(
   // text + focused rendered-page recovery path.
   const NATIVE_PDF_INLINE_LIMIT_BYTES = 14 * 1024 * 1024;
   const textCanLocatePages = doc.pages.some((page) => page.text.replace(/\s/g, "").length >= 500);
-  const request: ExtractionRequest = {
+  const hasEffectivelyEmptyPage = doc.pages.some((page) => page.text.replace(/\s/g, "").length < 40);
+  // A short engineering drawing with image-only sheets is a special document
+  // structure.  Some official drawing PDFs pair a rasterised mechanical sheet
+  // with a searchable legal-notice sheet; testing only the document's TOTAL
+  // text mistakes the notice for usable drawing text. Native-PDF viewers often
+  // rasterise an A3 sheet low enough that its small dimensions are unreadable,
+  // while Forge's focused renderer preserves them. Render every sheet when
+  // there are at most four and at least one has no useful text; that is still
+  // one model read, not a second opinion, and it works for any vendor or
+  // component. A failed render falls back to the native-PDF recovery below.
+  const MAX_SPARSE_SHEETS = 4;
+  let preRendered: ExtractionRequest | null = null;
+  if (hasEffectivelyEmptyPage && doc.pages.length > 0 && doc.pages.length <= MAX_SPARSE_SHEETS) {
+    try {
+      const candidate = await withRenderedPages(
+        builtRequest,
+        pdfBytes,
+        doc.pages.map((page) => page.page),
+        renderBudgetMs !== undefined ? { budgetMs: renderBudgetMs } : {},
+        builtRequest.packageType ?? null
+      );
+      if (candidate.images.length === doc.pages.length) preRendered = candidate;
+    } catch {
+      preRendered = null;
+    }
+  }
+  const request: ExtractionRequest = preRendered ?? {
     ...builtRequest,
     ...(model.supportsNativePdf && !textCanLocatePages && pdfBytes.byteLength <= NATIVE_PDF_INLINE_LIMIT_BYTES
       ? { sourceDocument: { mimeType: "application/pdf" as const, base64: Buffer.from(pdfBytes).toString("base64") } }
@@ -1183,10 +1229,17 @@ export async function runExtraction(
   // same provider to inspect a lossy render of a subset in a second paid call.
   // Besides cost, this is a reliability rule: a failure on that redundant call
   // used to discard the successful first answer at the caller boundary.
-  const pages = request.sourceDocument ? [] : requestedPages(first, doc);
+  // A user-selected package is stronger evidence than the model's choice of a
+  // page.  Locate that package's mechanical drawing independently and ensure
+  // the visual pass sees it; otherwise a denser sibling drawing can be read
+  // correctly and then (correctly) refused under the selected name, leaving an
+  // avoidable dead end even though the requested drawing is in the document.
+  const selectedDrawing = request.packageType ? findPackageDrawing(doc, request.packageType) : null;
+  const pages = request.sourceDocument || preRendered ? [] : requestedPages(first, doc, selectedDrawing?.page);
   let second: ExtractionResult = { values: {} };
-  let rendered: number[] = [];
-  let images: RenderedPage[] = [];
+  let visualRequest: ExtractionRequest | null = preRendered;
+  let rendered: number[] = preRendered?.images.map((image) => image.page) ?? [];
+  let images: RenderedPage[] = preRendered?.images ?? [];
   if (pages.length > 0) {
     // RENDERING and ASKING are separated, because their failures mean opposite
     // things and one `catch` treated them the same.
@@ -1202,7 +1255,12 @@ export async function runExtraction(
       // Pass 1's own package answer goes with it. See `withRenderedPages`: the
       // second pass sees only the drawing pages, and a pass asked to measure a
       // package nobody has named refuses the whole document and says so.
-      const chosen = typeof first.values.packageType?.value === "string" ? first.values.packageType.value : null;
+      // A package already on the request is the user's selection.  The reader
+      // may report that the document does not characterise it, but it may not
+      // redirect the drawing pass to a sibling package and return that sibling's
+      // dimensions under the selected name.
+      const chosen = request.packageType ??
+        (typeof first.values.packageType?.value === "string" ? first.values.packageType.value : null);
       withImages = await withRenderedPages(
         request,
         pdfBytes,
@@ -1212,6 +1270,7 @@ export async function runExtraction(
       );
       images = withImages.images;
       rendered = images.map((image) => image.page);
+      visualRequest = withImages;
     } catch {
       // No renderer, or none of the pages could be rasterised. Pass 1 stands.
       withImages = null;
@@ -1222,7 +1281,230 @@ export async function runExtraction(
     }
   }
 
-  const combined = combine(first, second, partNumber ?? part.partNumber.value ?? undefined);
+  let combined = combine(first, second, partNumber ?? part.partNumber.value ?? undefined);
+
+  // A rendered package outline can be present while a broad drawing answer
+  // misses one of the small set of values required by the supported gull-wing
+  // IPC calculation.  Reuse those same pixels for one narrow recovery request
+  // before asking the user to transcribe an entire land pattern.  Existing
+  // values are omitted from the question, so the follow-up cannot replace a
+  // reading already retained.  Every recovered number still faces the normal
+  // citation, range, consistency and geometry checks.
+  const selectedForGeometry = request.packageType ??
+    (typeof combined.values.packageType?.value === "string" ? combined.values.packageType.value : null);
+  const selectedEntryHasPins = Boolean(
+    combined.packagesInThisDocument?.some((entry) =>
+      Array.isArray(entry.pins) && entry.pins.length > 0 &&
+      (selectedForGeometry === null || sameDesignatorName(entry.packageType, selectedForGeometry))
+    )
+  );
+
+  // The focused pinout retry that was unsafe for dense active-device tables is
+  // safe and useful for passive board interfaces: their contacts either carry
+  // printed terminal labels or are deliberately anonymous numbered positions.
+  // Ask only for that list over the already-rendered drawing.  This exception
+  // is package-semantic, never inferred from a missing table, and the returned
+  // numbering still has to pass the ordinary pin-table and citation checks.
+  const readPinCount = combined.values.pinCount?.value;
+  const terminalLayoutPinCount =
+    part.pinCount.value ??
+    (typeof readPinCount === "number" && Number.isInteger(readPinCount)
+      ? readPinCount
+      : declaredLeadCount(selectedForGeometry ?? "") ?? 0);
+  if (
+    request.fields.includes("pins") &&
+    combined.values.pins === undefined &&
+    part.pins.value === null &&
+    !selectedEntryHasPins &&
+    requiresAuxiliaryPadInventory(selectedForGeometry) &&
+    visualRequest !== null &&
+    visualRequest.images.length > 0
+  ) {
+    const focusedPins: ExtractionRequest = {
+      ...visualRequest,
+      fields: ["pins"],
+      packageType: selectedForGeometry,
+      packageCandidates: undefined,
+      sourceDocument: undefined
+    };
+    const recoveredPins = await askTwice(model, focusedPins, focusedPins.images.length);
+    combined = combine(combined, recoveredPins, partNumber ?? part.partNumber.value ?? undefined);
+  }
+
+  // Dense active-device pinouts may be retried only when an independent text-
+  // geometry reader can verify every returned number/name pair. A previous
+  // unrestricted focused retry shifted 22 STM32 pins while preserving counts
+  // and name multisets; accepting a second model answer would repeat that
+  // defect. Here the model proposes a table and `pinoutEvidence`—which reads
+  // collinear numbers and names directly from PDF glyph positions—must confirm
+  // the entire table before it enters the record.
+  if (
+    request.fields.includes("pins") &&
+    combined.values.pins === undefined &&
+    part.pins.value === null &&
+    !selectedEntryHasPins &&
+    !requiresAuxiliaryPadInventory(selectedForGeometry)
+  ) {
+    const wantedPages = pinoutPages(doc);
+    let focusedVisual: ExtractionRequest | null = null;
+    if (wantedPages.length > 0) {
+      const reused = visualRequest?.images.filter((image) => wantedPages.includes(image.page)) ?? [];
+      if (reused.length > 0) {
+        focusedVisual = { ...visualRequest!, images: reused };
+      } else {
+        try {
+          focusedVisual = await withRenderedPages(
+            request,
+            pdfBytes,
+            wantedPages,
+            renderBudgetMs !== undefined ? { budgetMs: renderBudgetMs } : {},
+            selectedForGeometry
+          );
+        } catch {
+          focusedVisual = null;
+        }
+      }
+    }
+    if (focusedVisual && focusedVisual.images.length > 0) {
+      const focusedPins: ExtractionRequest = {
+        ...focusedVisual,
+        fields: ["pins"],
+        packageType: selectedForGeometry,
+        packageCandidates: undefined,
+        sourceDocument: undefined
+      };
+      const recoveredPins = await askTwice(model, focusedPins, focusedPins.images.length);
+      const candidate = combine(combined, recoveredPins, partNumber ?? part.partNumber.value ?? undefined);
+      const tentative = mergeModelValues(
+        part,
+        doc,
+        candidate,
+        candidate.answeredBy ?? model.name,
+        focusedPins.images.map((image) => image.page)
+      ).part;
+      const pins = tentative.pins.value ?? [];
+      const count = tentative.pinCount.value ?? 0;
+      const evidence = pins.length > 0 && count === pins.length ? pinoutEvidence(doc, pins, count) : null;
+      const citedPage = tentative.pins.citation?.page ?? null;
+      if (
+        evidence &&
+        evidence.agreeing.length === pins.length &&
+        (citedPage === null || evidence.pages.includes(citedPage))
+      ) {
+        combined = candidate;
+        for (const image of focusedPins.images) {
+          if (!images.some((held) => held.page === image.page)) images.push(image);
+        }
+        rendered = [...new Set([...rendered, ...focusedPins.images.map((image) => image.page)])].sort((a, b) => a - b);
+      }
+    }
+  }
+
+  const dimensionValue = (field: ExtractionField): unknown => {
+    const fromModel = combined.values[field]?.value;
+    if (fromModel !== undefined && fromModel !== null) return fromModel;
+    if (!field.startsWith("dimensions.")) return undefined;
+    const key = field.slice("dimensions.".length) as keyof PartRecord["dimensions"];
+    return part.dimensions[key]?.value;
+  };
+  const hasDimension = (field: ExtractionField): boolean => {
+    const value = dimensionValue(field);
+    return value !== undefined && value !== null;
+  };
+  const gullwingInputs: ExtractionField[] = [
+    "dimensions.pitchMm",
+    "dimensions.leadWidthMm",
+    "dimensions.leadSpanMm",
+    "dimensions.leadContactMm",
+    "dimensions.leadSides",
+    "dimensions.landPadLengthMm",
+    "dimensions.landPadWidthMm",
+    "dimensions.landSpanMm",
+    "dimensions.landSpanCrossMm"
+  ];
+  const hasComputedGullwing = [
+    "dimensions.pitchMm",
+    "dimensions.leadWidthMm",
+    "dimensions.leadSpanMm",
+    "dimensions.leadContactMm",
+    "dimensions.leadSides"
+  ].every((field) => hasDimension(field as ExtractionField));
+  const sides = Number(dimensionValue("dimensions.leadSides"));
+  const hasPrintedGullwing = [
+    "dimensions.pitchMm",
+    "dimensions.landPadLengthMm",
+    "dimensions.landPadWidthMm",
+    "dimensions.leadSides"
+  ].every((field) => hasDimension(field as ExtractionField)) &&
+    (sides === 1 || hasDimension("dimensions.landSpanMm"));
+  if (
+    leadFormFromPackageName(selectedForGeometry) === "gullwing" &&
+    !hasComputedGullwing &&
+    !hasPrintedGullwing &&
+    visualRequest !== null &&
+    visualRequest.images.length > 0
+  ) {
+    const missing = gullwingInputs.filter((field) => !hasDimension(field));
+    const focused: ExtractionRequest = {
+      ...visualRequest,
+      fields: missing,
+      packageType: selectedForGeometry,
+      packageCandidates: undefined,
+      sourceDocument: undefined
+    };
+    const recovered = await askTwice(model, focused, focused.images.length);
+    combined = combine(combined, recovered, partNumber ?? part.partNumber.value ?? undefined);
+  }
+
+  // An irregular numbered layout is too important to lose to omission. The
+  // ordinary drawing pass asks for dozens of fields and can either decline this
+  // structured list or omit it altogether. Before treating a cornered or
+  // otherwise irregular pattern as ordinary rows, ask one narrow follow-up over
+  // those SAME pixels. This is recovery of a missed value, not a second source
+  // or a relaxation: its answer goes through the identical citation and output
+  // geometry validation below, and null still remains unknown.
+  if (
+    request.fields.includes("dimensions.terminalPads") &&
+    combined.values["dimensions.terminalPads"] === undefined &&
+    // Tiny bottom-terminal packages are where four terminals most often sit at
+    // the corners rather than at four edge midpoints. Ordinary SOIC/QFP/through-
+    // hole parts remain on the two-pass path; their regular rows are fully
+    // described by the scalar fields. This is a package-class recovery rule,
+    // not a part-number exception.
+    /(?:X?DFN|LGA|WLCSP)/i.test(selectedForGeometry ?? "") &&
+    terminalLayoutPinCount > 0 &&
+    terminalLayoutPinCount <= 8 &&
+    visualRequest !== null &&
+    visualRequest.images.length > 0
+  ) {
+    const focused: ExtractionRequest = {
+      ...visualRequest,
+      fields: ["dimensions.terminalPads"],
+      packageType: selectedForGeometry,
+      packageCandidates: undefined,
+      sourceDocument: undefined
+    };
+    const recovered = await askTwice(model, focused, focused.images.length);
+    combined = combine(combined, recovered, partNumber ?? part.partNumber.value ?? undefined);
+  }
+
+  if (
+    request.fields.includes("dimensions.auxiliaryPads") &&
+    combined.values["dimensions.auxiliaryPads"] === undefined &&
+    requiresAuxiliaryPadInventory(selectedForGeometry) &&
+    visualRequest !== null &&
+    visualRequest.images.length > 0
+  ) {
+    const focused: ExtractionRequest = {
+      ...visualRequest,
+      fields: ["dimensions.auxiliaryPads"],
+      packageType: selectedForGeometry,
+      packageCandidates: undefined,
+      sourceDocument: undefined
+    };
+    const recovered = await askTwice(model, focused, focused.images.length);
+    combined = combine(combined, recovered, partNumber ?? part.partNumber.value ?? undefined);
+  }
 
   // A THIRD, FOCUSED PINOUT PASS WAS MEASURED AND REVERTED, 2026-08-19.
   //

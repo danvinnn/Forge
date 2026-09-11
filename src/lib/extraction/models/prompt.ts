@@ -38,7 +38,7 @@ export const FIELD_GUIDE: Record<ExtractionField, string> = {
   // rather than as the two cases, so it covers any document that repeats a name
   // or parenthesises part of one.
   pins:
-    "the full pin table as an array of {number, name, electricalType, description}. Give each name EXACTLY as the document prints it in the pin table's name cell or beside the pin on the pinout figure, character for character. Do NOT invent a suffix or a number to tell two pins apart: a package routinely has several pins with the SAME name (four pins all called GND, three all called IN) and repeating the name is the correct answer. Where the pin table and the pinout figure print different names for the same pin, prefer the pin table's name column. SOME PACKAGES HAVE CONTACTS THAT CARRY NO NAMES AT ALL: a connector, header, socket or terminal block numbers its contacts 1, 2, 3 and prints no name column anywhere, because the contact's function is decided by whatever is wired to it. Where THAT is what the document shows, report one entry per contact with the contact number as both `number` and `name`, and null for `electricalType` and `description`. Do this ONLY when the document shows the contacts and gives them no names. NEVER do it because you could not find a pin table or could not read one: a device whose pins DO have names you did not locate must be reported as null here, because a list of bare numbers would be read as this part's netlist.",
+    "the pin table as an array of {number, name, electricalType, description}. Give each name EXACTLY as the document prints it in the pin table's name cell or beside the pin on the pinout figure, character for character. Do NOT invent a suffix or a number to tell two pins apart: a package routinely has several pins with the SAME name (four pins all called GND, three all called IN) and repeating the name is the correct answer. Where the pin table and the pinout figure print different names for the same pin, prefer the pin table's name column. For an ACTIVE DEVICE, report only a complete table; missing one named function would silently miswire the symbol, so return null when the complete table cannot be read. A PASSIVE INTERCONNECT OR MAGNETIC COMPONENT is different: its schematic may explicitly label only the electrically connected package terminals while leaving other physical pads absent from the schematic. In that case report every numeric terminal the schematic DOES explicitly label even when the list has gaps; do not call omitted terminals NC and do not invent names for them. Forge will preserve those physical positions neutrally only when an independently cited package count proves the complete 1..N range. SOME PACKAGES HAVE CONTACTS THAT CARRY NO NAMES AT ALL: a connector, header, socket or terminal block numbers its contacts 1, 2, 3 and prints no name column anywhere, because the contact's function is decided by whatever is wired to it. Where THAT is what the document shows, report one entry per contact with the contact number as both `number` and `name`, and null for `electricalType` and `description`. Do this ONLY when the document shows the contacts and gives them no names. NEVER do it because you could not find a pin table or could not read one: a device whose pins DO have names you did not locate must be reported as null here, because a list of bare numbers would be read as this part's netlist.",
   "dimensions.bodyLengthMm": "package body length in millimetres, as a number",
   "dimensions.bodyWidthMm": "package body width in millimetres, as a number",
   // THE SEATED ENVELOPE, not the ceramic. Corrected 2026-08-18 after the
@@ -90,6 +90,8 @@ export const FIELD_GUIDE: Record<ExtractionField, string> = {
     "length of the EXPOSED THERMAL PAD on the underside of the package (drawing dimension D2, sometimes labelled 'exposed pad' or 'thermal pad'), in millimetres, as a number. Measure it along the SAME AXIS as dimensions.bodyLengthMm, i.e. parallel to the body's length D, so that the pad and the body describe the same orientation. Null if the package has no exposed pad.",
   "dimensions.thermalPadWidthMm":
     "width of the EXPOSED THERMAL PAD on the underside of the package (drawing dimension E2), in millimetres, as a number. Measure it along the SAME AXIS as dimensions.bodyWidthMm, i.e. across the body. On a rectangular pad this is the dimension perpendicular to thermalPadLengthMm; on a square pad the two are equal. Null if the package has no exposed pad.",
+  "dimensions.thermalPadRotationDeg":
+    "clockwise rotation in DEGREES of the exposed thermal pad relative to the package body axes. Return 0 when its edges are parallel to the body, 45 or -45 for a diamond-shaped square, and null only when there is no exposed pad or the drawing does not establish its orientation. This is the copper pad's orientation, not the package rotation on the PCB.",
   // The three below come off the datasheet's OWN recommended footprint drawing,
   // which is a different page from the package outline: the outline dimensions
   // the PART, this dimensions the COPPER the part is soldered to. Vendors
@@ -135,7 +137,7 @@ export const FIELD_GUIDE: Record<ExtractionField, string> = {
   "dimensions.landSpanCrossMm":
     "from the same RECOMMENDED FOOTPRINT drawing, and ONLY for a package with lands on all four sides: the centre-to-centre distance between the OTHER pair of opposing rows, measured ALONG THE SAME AXIS AS dimensions.bodyLengthMm, i.e. perpendicular to landSpanMm, in millimetres. The same gap-versus-extent-versus-centre check applies here. Most four-sided footprints are rectangular rather than square and the two differ; where they are equal, report the same number in both rather than null. Null for any package with lands on two sides or one, which has only one such distance, and null if the datasheet prints no recommended footprint.",
   "dimensions.leadSides":
-    "how many SIDES of the package carry leads or pads: 1 for a single line of leads along one edge (TO-220, TO-92, SIP, most voltage regulators and transistors), 2 for two opposing rows (SOIC, TSSOP, SOT-23, DFN, SON), 4 for leads or pads on all four sides (QFP, QFN, LFCSP). Return the number 1, 2 or 4. THREE separate drawings answer this and any one of them is enough, so check all three before answering null: the package outline, the recommended footprint, and the PINOUT or pin-configuration figure, which shows directly whether the pins run along one edge, down two sides, or around all four. A package with leads on exactly three sides is none of these; return null for that rather than rounding.",
+    "how many REGULAR EDGE ROWS carry leads or pads: 1 for a single line along one edge (TO-220, TO-92, SIP), 2 for two opposing rows (SOIC, TSSOP, SOT-23, ordinary DFN/SON), 4 for four rows centred along the left, bottom, right and top edges (QFP, ordinary QFN/LFCSP). Return 1, 2 or 4. Four pads at the FOUR CORNERS are NOT four edge rows: their centres have both nonzero x and y coordinates, so report dimensions.terminalPads instead and return null here. Check the package outline, recommended footprint and pinout before answering null. A package with leads on exactly three sides is also not representable by this field; return null rather than rounding.",
   "dimensions.leadForm":
     // 'straight' was missing here until 2026-08-17, while the record and the
     // generator have always accepted it. A ceramic flat pack leaves the factory
@@ -166,6 +168,10 @@ export const FIELD_GUIDE: Record<ExtractionField, string> = {
     "drill diameter of the thermal vias under the exposed pad, in millimetres, from the land pattern drawing, printed as e.g. 'VIA (0.35)'. Null if the package has no exposed pad or the drawing shows no vias.",
   "dimensions.thermalViaPitchMm":
     "centre-to-centre spacing of the thermal via grid under the exposed pad, in millimetres. Null if not shown.",
+  "dimensions.auxiliaryPads":
+    "from the package's RECOMMENDED PCB LAYOUT: every physical board feature OTHER THAN the numbered electrical contact lands, expanded to one entry per feature as {kind, xMm, yMm, widthMm, heightMm, shape, rotationDeg?, drillMm?, hasPaste?}. Include soldered hold-downs, mounting tabs, shield tabs, locating holes and mechanical holes; these are mandatory parts of the footprint even when they have no pin number. `kind` is exactly `smd-pad`, `plated-hole`, or `non-plated-hole`; shape is exactly `roundrect`, `circle`, `rect`, or `oval`. Coordinates are millimetres from the centre of the NUMBERED contact pattern in the drawing's top view, +x to the right and +y down. Width is the full left-to-right size and height the full top-to-bottom size before rotation. For a hole, drillMm is the finished hole diameter and width/height are the surrounding pad size (equal to the drill for a non-plated hole with no copper). Expand `2 PLC` and symmetric dimensions into both physical entries. Return [] only after inspecting the recommended layout and establishing that it has no non-terminal board features. Return null if there is no recommended layout, if any required feature's complete position or size cannot be read, or if the drawing's coordinate origin cannot be related to the numbered contacts. Never approximate an irregular feature as a rectangle unless the recommended copper itself is rectangular.",
+  "dimensions.terminalPads":
+    "Inspect the manufacturer's RECOMMENDED PCB LAYOUT and decide whether its NUMBERED electrical lands form ordinary regular rows. Return [] only when you positively establish one straight row, two opposing regular rows, or four regular rows centred along the left/bottom/right/top edges; the scalar land fields describe those. For any other arrangement, return the COMPLETE layout expanded to one entry per numbered terminal as {number, xMm, yMm, widthMm, heightMm, shape, rotationDeg?}. Coordinates are millimetres from the centre of the numbered land pattern in the drawing's top view, +x right and +y down. Width and height are full copper sizes along x and y before rotation; shape is exactly `roundrect`, `circle`, `rect`, or `oval`. Every pin must appear exactly once and every coordinate and size must be explicitly derivable from dimension lines; return null if the layout was not inspected or any required geometry is missing. Four lands at the FOUR CORNERS require explicit entries even when the package outline calls them 4X: a regular four-row placer would put one at each edge midpoint and is not equivalent. This excludes auxiliary hold-downs and the exposed pad.",
   jedecOutline:
     "the STANDARD outline registration cited for this package, e.g. 'MO-153 AA' or 'MS-012 AA' for JEDEC, usually printed as 'Reference JEDEC registration ...'. Hermetic military and radiation-hardened packages cite MIL-STD-1835 instead of JEDEC, printed next to the package name as e.g. 'MIL-STD-1835: CDFP4-F16' or 'MIL-STD-1835 CDIP2-T16'. Report the code alone, 'CDFP4-F16', exactly as the JEDEC case reports 'MO-153 AA' and not the words around it. Look for it on the PINOUT page as well as on an outline drawing, because these documents often carry the registration beside the pinout and print no dimensioned outline at all. Report the registration belonging to the package you reported in packageType: a document describing two packages prints one for each, and they differ. This is the industry-wide package identity, NOT the vendor's own outline code such as PW0008A. Null if none is cited.",
   "radiation.tid": "total ionizing dose rating, e.g. '100krad(Si)'",
@@ -336,7 +342,7 @@ function pageRequestGuidance(fieldsWanted: string[]): string {
   // the exact failure rendering exists to avoid, and 11 of 56 hold-out parts
   // stopped on those fields.
   const wantsLand = fieldsWanted.some(
-    (field) => field.startsWith("dimensions.land") || field.startsWith("dimensions.solderMask") || field.startsWith("dimensions.thermalVia")
+    (field) => field.startsWith("dimensions.land") || field.startsWith("dimensions.solderMask") || field.startsWith("dimensions.thermalVia") || field === "dimensions.auxiliaryPads" || field === "dimensions.terminalPads"
   );
   const wantsThermalPad = fieldsWanted.some((field) => field.startsWith("dimensions.thermalPad"));
   if (!wantsDrawing && !wantsPins && !wantsLand) return "";
@@ -348,7 +354,7 @@ to is shown by ARROWS, which are graphics. A pinout drawn as a figure has the sa
 
 So also return "pagesWorthRendering": a list of page numbers that should be rendered as IMAGES and
 shown to you next. Include:
-${wantsDrawing ? "- the package outline / mechanical drawing page\n" : ""}${wantsPins ? "- the page carrying the pin configuration figure or pinout diagram\n" : ""}${wantsLand ? "- the RECOMMENDED FOOTPRINT / LAND PATTERN page, which is a DIFFERENT page from the package outline and is usually captioned 'LAND PATTERN EXAMPLE', 'RECOMMENDED FOOTPRINT', 'EXAMPLE BOARD LAYOUT' or 'Footprint example'. It carries the pad sizes, the centre span, the solder mask details and any thermal vias.\n" : ""}${wantsThermalPad ? "- the page showing the EXPOSED THERMAL PAD on the underside of the package, dimensions D2 and E2, if the package has one\n" : ""}
+${wantsDrawing ? "- the package outline / mechanical drawing page\n" : ""}${wantsPins ? "- the page carrying the pin configuration figure or pinout diagram\n" : ""}${wantsLand ? "- the RECOMMENDED FOOTPRINT / LAND PATTERN page, which is a DIFFERENT page from the package outline and is usually captioned 'LAND PATTERN EXAMPLE', 'RECOMMENDED FOOTPRINT', 'EXAMPLE BOARD LAYOUT' or 'Footprint example'. It carries the numbered pad sizes, centre span, solder mask details, thermal vias, and any non-numbered hold-down pads or mechanical holes.\n" : ""}${wantsThermalPad ? "- the page showing the EXPOSED THERMAL PAD on the underside of the package, dimensions D2 and E2, if the package has one\n" : ""}
 If the part number tells you which package this part is supplied in, name those pages for THAT
 package. If it does not, name them for EVERY package the document offers: those pages carry
 different numbers for each package, and there is no way to choose between them afterwards.
@@ -469,6 +475,28 @@ whole document, which you have already read. Use them:
 - Report the page number the value was printed on, whether you read it from the image or the text.
 - If a page carries no drawing and no table relevant to a field, that field is simply not on it.
   Do not read a value off a nearby page and attribute it to this one.
+- On a RECOMMENDED PCB LAYOUT, inspect the whole drawing for non-numbered copper lands and holes,
+  especially the large lands commonly used for connector hold-downs. The dimensioned OUTER land
+  boundary is the copper shape. A smaller irregular outline drawn inside it can be the component's
+  metal hold-down or body silhouette; do not mistake that inner silhouette for an undimensioned
+  custom copper shape when the outer rectangular land is explicitly dimensioned.
+- For dimensions expressed with variables such as POS, use the requested orderable's position count
+  and the drawing's own formula or dimension table. Locate auxiliary-pad centres relative to the
+  centre of the numbered contact pattern: the numbered pattern runs from the first to last contact
+  centre, not from the component body's edges. Symmetric \`2 PLC\` lands must become two entries.
+  For example, when the first-to-last contact-centre span is S, an outer auxiliary-land edge is D
+  beyond the first or last contact centre, and that land's width is W, its centre is at magnitude
+  S/2 + D - W/2 on that axis. When a land edge is explicitly aligned with the numbered contacts'
+  centreline and its height is H, its centre is H/2 from that centreline. Apply these relations only
+  when the drawing's dimension arrows and alignment lines establish them.
+- If \`dimensions.auxiliaryPads\` was requested, answer it explicitly after inspecting the board-layout
+  image: give every established non-terminal feature, [] only when there are none, or null when any
+  mandatory feature cannot be fully located and sized. Do not silently omit the field.
+- If \`dimensions.terminalPads\` was requested, apply its own regular-row test after inspecting the
+  board-layout image. Give every numbered land for a cornered or otherwise irregular layout, [] only
+  for a layout the ordinary row placer represents exactly, or null when any numbered land cannot be
+  fully located and sized. Four corner lands are not two ordinary rows merely because each column has
+  two lands: if their two centre spacings differ, the scalar pitch-and-span representation cannot place them.
 `;
 }
 
@@ -548,22 +576,9 @@ Rules:${nativeDocument}
 - If a field is not stated in the document, return null for it. Do NOT guess, infer, or estimate.
 - For every field you DO answer, report the page number you read it from.
 - The page number must be a page where the value literally appears. Answers whose page cannot be confirmed are discarded.
-${partNumber ? `- The requested part number is "${partNumber}". Data for other devices mentioned in the document is not relevant.\n` : ""}${
+${partNumber ? `- The requested part number is "${partNumber}". Match that COMPLETE printed identifier exactly, including every prefix, suffix, hyphen and digit. On connector and configurable-product drawings those characters commonly select the contact count or mechanical variant; never drop one or treat it as punctuation. Resolve the exact ordering-table row before reporting its pin count or dimensions. Data for other devices mentioned in the document is not relevant.\n` : ""}${
     packageType
-      ? // A SUGGESTION, not an instruction, and the difference is the whole point.
-        //
-        // This used to read "This part is in the X package ... report values for
-        // THIS one only". A text-layer parser produced that X, and when it was
-        // wrong the model went and read the wrong drawing faithfully, because it
-        // had been told the answer rather than asked the question. That is the
-        // last place the deterministic pass gave orders.
-        //
-        // The model is still told what the parser found, because the hint is
-        // measurably load-bearing: asked about an LM358 with nothing, the model
-        // correctly returns null for every dimension and says the document
-        // describes several packages. What changes is that it may now disagree,
-        // and must say which package it actually read.
-        `- A text scan of this document suggests the package is "${packageType}", but that scan is often wrong and you should not assume it. Decide for yourself which package the requested part number is supplied in, report it as "packageType", and report every other value for the package YOU chose. If you disagree with the suggestion, say so in "notes".\n`
+      ? `- The user selected package "${packageType}". Extract values for THAT package only. Do not substitute a sibling package even if its drawing is easier to read. If the document does not characterise the selected package, return null for its package-specific fields and explain that in "notes".\n`
       : candidates.length > 0
         ? // The refusal is preserved deliberately. Where the part number really
           // does not decide, a guess here becomes a footprint, and the one wrong

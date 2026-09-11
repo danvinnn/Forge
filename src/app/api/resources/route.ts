@@ -12,12 +12,13 @@ export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;
   const partNumber = (query.get("partNumber") ?? "").trim();
   const manufacturer = (query.get("manufacturer") ?? "").trim();
+  const packageType = (query.get("packageType") ?? "").trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9._+\-/ ]{0,79}$/.test(partNumber) || manufacturer.length < 2 || manufacturer.length > 120) {
     return NextResponse.json({ error: "A valid part number and manufacturer are required." }, { status: 400 });
   }
   try {
     const { discoverOfficialResources } = await import("../../../lib/retrieval/resolvers/resources");
-    return NextResponse.json({ resources: await discoverOfficialResources(partNumber, manufacturer) });
+    return NextResponse.json({ resources: await discoverOfficialResources(partNumber, manufacturer, packageType || undefined) });
   } catch {
     // Discovery is an automatic recovery attempt, never a reason to fail the job.
     return NextResponse.json({ resources: [] });

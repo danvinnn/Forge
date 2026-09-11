@@ -63,6 +63,13 @@ function spanCoversBody(part: ResolvedPart): ConfidenceCheck {
   const bodyWidth = part.dimensions.bodyWidthMm;
   const bodyLength = part.dimensions.bodyLengthMm;
   const base = { id: "span-covers-body", label: "Lead span reaches past the body" };
+  // No-lead terminals sit on the UNDERSIDE of the body and therefore normally
+  // end inside its outline.  Applying the gull-wing invariant to LGA/QFN/DFN
+  // packages turns a correct inner terminal span into a contradiction.  Their
+  // copper is checked by the printed-land and overlap invariants below.
+  if (part.dimensions.leadForm === "nolead") {
+    return { ...base, state: "unavailable", detail: "No-lead terminals are intentionally contained within the body outline." };
+  }
   if (!span || (bodyWidth === null && bodyLength === null)) {
     return { ...base, state: "unavailable", detail: "The drawing's lead span or body size was not read." };
   }
@@ -126,7 +133,14 @@ function landsClearTheCentre(part: ResolvedPart): ConfidenceCheck {
   const length = part.dimensions.landPadLengthMm;
   const span = part.dimensions.landSpanMm;
   const crossSpan = part.dimensions.landSpanCrossMm;
-  const base = { id: "lands-clear-centre", label: "Opposing lands do not overlap" };
+  const base = { id: "lands-clear-centre", label: "Opposing-land centre clearance" };
+  if ((part.dimensions.terminalPads?.length ?? 0) > 0) {
+    return {
+      ...base,
+      state: "unavailable",
+      detail: "The manufacturer specifies explicit numbered-land coordinates; the finished oriented copper is checked directly."
+    };
+  }
   if (length === null || span === null) {
     return { ...base, state: "unavailable", detail: "No printed land pattern was read." };
   }
@@ -146,8 +160,15 @@ function landsClearTheCentre(part: ResolvedPart): ConfidenceCheck {
   // which is the placer's convention and the same one `bench:copper` states.
   // `landSpanMm` is the x spread and `landSpanCrossMm` the y, so each axis is
   // compared against the pad extent that actually lies across it.
-  const padAcross = part.exposedPad ? part.dimensions.thermalPadWidthMm ?? 0 : 0;
-  const padAlong = part.exposedPad ? part.dimensions.thermalPadLengthMm ?? 0 : 0;
+  // A rotated exposed pad (most visibly, a diamond between four corner lands)
+  // does not occupy its full bounding width along the entire row.  Reducing it
+  // to one scalar falsely reports a short.  The generated oriented rectangles
+  // are checked exactly by `geometryViolations`, so this coarse pre-check uses
+  // only axis-aligned pads.
+  const thermalRotation = part.dimensions.thermalPadRotationDeg ?? null;
+  const rotatedThermal = thermalRotation !== null && thermalRotation % 180 !== 0;
+  const padAcross = part.exposedPad && !rotatedThermal ? part.dimensions.thermalPadWidthMm ?? 0 : 0;
+  const padAlong = part.exposedPad && !rotatedThermal ? part.dimensions.thermalPadLengthMm ?? 0 : 0;
   const axes: Array<{ what: string; span: number; occupied: number }> = [
     { what: "the two rows", span, occupied: padAcross }
   ];
@@ -167,6 +188,15 @@ function landsClearTheCentre(part: ResolvedPart): ConfidenceCheck {
     // what is left over.
     const clearance = (gap - axis.occupied) / 2;
     if (axis.occupied > 0 && clearance <= 0) {
+      if (thermalRotation === null) {
+        return {
+          ...base,
+          state: "unavailable",
+          detail:
+            `The exposed pad would meet the lead lands if it were axis-aligned, but its rotation was not read. ` +
+            `The generated copper check must establish its actual orientation.`
+        };
+      }
       return {
         ...base,
         state: "fail",
@@ -297,7 +327,14 @@ function sidesAddUp(part: ResolvedPart): ConfidenceCheck {
  * this one tells a reviewer why a part that built is worth trusting.
  */
 function printedPatternInBand(part: ResolvedPart): ConfidenceCheck {
-  const base = { id: "printed-in-band", label: "Printed footprint agrees with IPC-7351B" };
+  const base = { id: "printed-in-band", label: "Printed footprint compared with IPC-7351B" };
+  if ((part.dimensions.terminalPads?.length ?? 0) > 0) {
+    return {
+      ...base,
+      state: "unavailable",
+      detail: "The manufacturer prints an irregular explicit land layout rather than a regular IPC row pattern."
+    };
+  }
   const padLength = part.dimensions.landPadLengthMm;
   const centreSpan = part.dimensions.landSpanMm;
   const span = part.dimensions.leadSpanMm;
@@ -454,6 +491,47 @@ function extent(pad: { centre: { xMm: number; yMm: number }; widthMm: number; he
   };
 }
 
+/** Exact overlap for rotated rectangular copper; AABBs reject valid diamonds. */
+function orientedRectanglesJoin(
+  left: { centre: { xMm: number; yMm: number }; widthMm: number; heightMm: number; rotationDeg?: number },
+  right: { centre: { xMm: number; yMm: number }; widthMm: number; heightMm: number; rotationDeg?: number }
+): boolean {
+  const corners = (pad: typeof left) => {
+    const angle = ((pad.rotationDeg ?? 0) * Math.PI) / 180;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    const local: Array<[number, number]> = [
+      [-pad.widthMm / 2, -pad.heightMm / 2],
+      [pad.widthMm / 2, -pad.heightMm / 2],
+      [pad.widthMm / 2, pad.heightMm / 2],
+      [-pad.widthMm / 2, pad.heightMm / 2]
+    ];
+    return local.map(([x, y]) => ({
+      x: pad.centre.xMm + x * cosine - y * sine,
+      y: pad.centre.yMm + x * sine + y * cosine
+    }));
+  };
+  const a = corners(left);
+  const b = corners(right);
+  const axes = [
+    { x: a[1].x - a[0].x, y: a[1].y - a[0].y },
+    { x: a[3].x - a[0].x, y: a[3].y - a[0].y },
+    { x: b[1].x - b[0].x, y: b[1].y - b[0].y },
+    { x: b[3].x - b[0].x, y: b[3].y - b[0].y }
+  ];
+  return axes.every((edge) => {
+    const length = Math.hypot(edge.x, edge.y);
+    const axis = { x: -edge.y / length, y: edge.x / length };
+    const project = (points: Array<{ x: number; y: number }>) => {
+      const values = points.map((point) => point.x * axis.x + point.y * axis.y);
+      return { min: Math.min(...values), max: Math.max(...values) };
+    };
+    const pa = project(a);
+    const pb = project(b);
+    return pa.min <= pb.max + TOUCHING_MM && pb.min <= pa.max + TOUCHING_MM;
+  });
+}
+
 /**
  * Floating-point slack around ZERO CLEARANCE.
  *
@@ -569,16 +647,18 @@ export function geometryViolations(geometry: FootprintGeometry, part: ResolvedPa
       const a = extent(lands[left]);
       const b = extent(lands[right]);
       // MEETING COUNTS, NOT ONLY CROSSING. See `TOUCHING_MM`.
-      const joined =
-        a.x0 <= b.x1 + TOUCHING_MM &&
-        b.x0 <= a.x1 + TOUCHING_MM &&
-        a.y0 <= b.y1 + TOUCHING_MM &&
-        b.y0 <= a.y1 + TOUCHING_MM;
+      const rotated = Boolean(lands[left].rotationDeg || lands[right].rotationDeg);
+      const joined = rotated
+        ? orientedRectanglesJoin(lands[left], lands[right])
+        : a.x0 <= b.x1 + TOUCHING_MM &&
+          b.x0 <= a.x1 + TOUCHING_MM &&
+          a.y0 <= b.y1 + TOUCHING_MM &&
+          b.y0 <= a.y1 + TOUCHING_MM;
       if (joined) {
         const apart =
           Math.max(a.x0 - b.x1, b.x0 - a.x1, a.y0 - b.y1, b.y0 - a.y1);
         problems.push(
-          apart >= -TOUCHING_MM
+          !rotated && apart >= -TOUCHING_MM
             ? `lands ${lands[left].number} and ${lands[right].number} meet edge to edge, so they are one piece of copper`
             : `lands ${lands[left].number} and ${lands[right].number} overlap, which shorts them together`
         );
@@ -877,6 +957,7 @@ export function symbolViolations(symbol: SymbolGeometry, part: ResolvedPart): st
   for (const pin of part.pins) {
     if (/^\d+$/.test(pin.number)) named.set(pin.number, pin.name);
   }
+  if (part.exposedPadPin) named.set(part.exposedPadPin.number, part.exposedPadPin.name);
   for (let number = 1; number <= part.pinCount; number += 1) {
     const key = String(number);
     const count = drawn.get(key) ?? 0;
@@ -887,8 +968,9 @@ export function symbolViolations(symbol: SymbolGeometry, part: ResolvedPart): st
         `so that connection does not exist in the schematic`
     );
   }
-  // THE EXPOSED PAD IS NOT A SCHEMATIC PIN, and it is the one row that may sit
-  // past the lead count without being an error.
+  // An unnamed exposed pad is not a schematic terminal. A NUMBERED pad with a
+  // net name is: omitting it makes that mandatory connection impossible in the
+  // schematic even though the copper exists in the footprint.
   //
   // Texas Instruments numbers the pad as an ordinary row - a PowerPAD SOIC-8 has
   // a NINTH called `9` - and `geometryViolations` already allows a land at that
@@ -896,12 +978,21 @@ export function symbolViolations(symbol: SymbolGeometry, part: ResolvedPart): st
   // so this generator draws no stub for it, and reporting the absent stub would
   // refuse every PowerPAD part in the corpus.
   const padNumber = part.exposedPad ? thermalPadNumber(part.pinCount) : null;
+  if (part.exposedPadPin) {
+    const count = drawn.get(part.exposedPadPin.number) ?? 0;
+    if (count !== 1) {
+      problems.push(
+        `the exposed pad is electrical pin ${part.exposedPadPin.number} ("${part.exposedPadPin.name}") and the symbol draws it ${count} times`
+      );
+    }
+  }
 
   // A pin the TABLE carries that no land and no symbol pin reaches. The
   // footprint's own checks report the missing land; this reports the missing
   // stub, so a reader is not told half of it.
   for (const [number, name] of named) {
-    if (Number(number) <= part.pinCount || number === padNumber) continue;
+    if (Number(number) <= part.pinCount || (number === padNumber && !part.exposedPadPin)) continue;
+    if (part.exposedPadPin?.number === number && (drawn.get(number) ?? 0) === 1) continue;
     problems.push(
       `the pin table lists pin ${number} ("${name}"), which is past this part's ${part.pinCount} pins, ` +
         `and the symbol does not draw it`
@@ -909,6 +1000,7 @@ export function symbolViolations(symbol: SymbolGeometry, part: ResolvedPart): st
   }
   for (const [number] of drawn) {
     if (Number(number) >= 1 && Number(number) <= part.pinCount) continue;
+    if (part.exposedPadPin?.number === number) continue;
     problems.push(`the symbol draws pin ${number}, which is not one of this part's ${part.pinCount} pins`);
   }
 

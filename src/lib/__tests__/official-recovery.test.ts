@@ -6,21 +6,22 @@ const resources: RecoverableOfficialResource[] = [
   { kind: "package-drawing", url: "https://maker.test/drawing.pdf" },
   { kind: "cad", url: "https://maker.test/part.pretty.zip" },
   { kind: "step", url: "https://maker.test/part.step" },
+  { kind: "pinout", url: "https://maker.test/part-bsdl.zip" },
   { kind: "spice", url: "https://maker.test/part.lib" },
   { kind: "cad", url: "https://maker.test/part-alt.pretty.zip" },
   { kind: "application-note", url: "https://maker.test/note.pdf" }
 ];
 
 test("automatic official recovery attempts only artifact types needed by the chosen intent", () => {
-  assert.deepEqual(automaticOfficialImports(resources, "cad", { cad: false, step: false, spice: false }, new Set()).map((r) => r.kind), ["cad", "step", "cad"]);
+  assert.deepEqual(automaticOfficialImports(resources, "cad", { cad: false, step: false, spice: false, pinout: false }, new Set()).map((r) => r.kind), ["cad", "step", "pinout", "cad"]);
   assert.deepEqual(automaticOfficialImports(resources, "spice", { cad: false, spice: false }, new Set()).map((r) => r.kind), ["spice"]);
-  assert.deepEqual(automaticOfficialImports(resources, "both", { cad: false, step: false, spice: false }, new Set()).map((r) => r.kind), ["cad", "step", "spice", "cad"]);
+  assert.deepEqual(automaticOfficialImports(resources, "both", { cad: false, step: false, spice: false, pinout: false }, new Set()).map((r) => r.kind), ["cad", "step", "pinout", "spice", "cad"]);
 });
 
 test("automatic official recovery never replaces an artifact or retries a failed URL", () => {
   const attempted = new Set(["https://maker.test/part.pretty.zip"]);
   assert.deepEqual(
-    automaticOfficialImports(resources, "both", { cad: true, step: true, spice: false }, attempted).map((r) => r.url),
+    automaticOfficialImports(resources, "both", { cad: true, step: true, pinout: true, spice: false }, attempted).map((r) => r.url),
     ["https://maker.test/part.lib"]
   );
 });

@@ -48,7 +48,7 @@ import { resolveForExport, type PartRecord, type ResolvedPart } from "../types";
  * proportions of a small surface-mount package, chosen so that the resulting
  * pads sit inside their own courtyard and clear of each other.
  */
-function answerFor(need: RequiredInput, record: PartRecord, designator?: string): number | string {
+function answerFor(need: RequiredInput, record: PartRecord, designator?: string): unknown {
   // THE CHOSEN PACKAGE'S OWN MEASUREMENTS, not the record's empty flat block.
   //
   // On a document whose part number does not name a package, every dimension
@@ -104,6 +104,10 @@ function answerFor(need: RequiredInput, record: PartRecord, designator?: string)
       return num(dims.thermalPadLengthMm.value) ?? body * 0.6;
     case "thermalPadWidthMm":
       return num(dims.thermalPadWidthMm.value) ?? body * 0.6;
+    case "thermalPadRotationDeg":
+      return dims.thermalPadRotationDeg?.value ?? 0;
+    case "terminalPads":
+      return dims.terminalPads?.value ?? [];
     case "leadSides":
       return sides;
     case "leadsPerSide": {

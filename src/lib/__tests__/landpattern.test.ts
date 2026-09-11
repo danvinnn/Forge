@@ -115,6 +115,46 @@ async function refusal(part: ResolvedPart): Promise<FootprintUnavailableError> {
   throw new assert.AssertionError({ message: "expected a refusal, got a bundle" });
 }
 
+test("a connector never drops unread non-numbered mounting features", async () => {
+  const connector = withDimensions(
+    {
+      pitchMm: 0.5,
+      leadCount: 10,
+      leadSides: 1,
+      leadForm: "gullwing",
+      mounting: "smd",
+      landPadLengthMm: 1.1,
+      landPadWidthMm: 0.3,
+      auxiliaryPads: null
+    },
+    { packageType: "10-position FFC connector", pinCount: 10, pins: pins(10) }
+  );
+  const error = await refusal(connector);
+  assert.match(error.message, /hold-down|mechanical holes/i);
+  assert.equal(error.needs.length, 0, "manual transcription of an entire mounting pattern is not a useful question");
+});
+
+test("every cited auxiliary hold-down is emitted as non-numbered copper", async () => {
+  const connector = withDimensions(
+    {
+      pitchMm: 0.5,
+      leadCount: 10,
+      leadSides: 1,
+      leadForm: "gullwing",
+      mounting: "smd",
+      landPadLengthMm: 1.1,
+      landPadWidthMm: 0.3,
+      auxiliaryPads: [
+        { kind: "smd-pad", xMm: -4.1, yMm: 1, widthMm: 2.3, heightMm: 3.1, shape: "rect" },
+        { kind: "smd-pad", xMm: 4.1, yMm: 1, widthMm: 2.3, heightMm: 3.1, shape: "rect" }
+      ]
+    },
+    { packageType: "10-position FFC connector", pinCount: 10, pins: pins(10) }
+  );
+  const footprint = await footprintOf(connector);
+  assert.equal((footprint.match(/\(pad "" smd rect /g) ?? []).length, 2);
+});
+
 // ---------------------------------------------------------------------------
 // 1. The datasheet's own printed footprint
 // ---------------------------------------------------------------------------
@@ -421,6 +461,30 @@ test("a through-hole part with no lead diameter asks rather than sizing a hole i
   assert.ok(error.needs.length > 0, "a hole nobody measured is a question, not a default");
 });
 
+test("a two-terminal axial package asks only for the board's chosen lead spacing", async () => {
+  const axial = withDimensions({
+    pitchMm: null,
+    leadSides: 2,
+    mounting: "through-hole",
+    leadDiameterMm: 0.9,
+    holeDiameterMm: null,
+    landSpanMm: null,
+    leadSpanMm: null
+  }, { partNumber: "ACMEDIODE", packageType: "DO-204AL", pinCount: 2 });
+  const error = await refusal(axial);
+  assert.deepEqual(error.needs.map((need) => need.field), ["pitchMm"]);
+  assert.match(error.needs[0].label, /hole-to-hole lead spacing/i);
+
+  const footprint = await footprintOf(withDimensions(
+    { ...axial.dimensions, pitchMm: 10.16 },
+    { partNumber: "ACMEDIODE", packageType: "DO-204AL", pinCount: 2 }
+  ));
+  const pads = [...footprint.matchAll(/\(pad "[12]" thru_hole \w+ \(at (-?[\d.]+) (-?[\d.]+)\)/g)];
+  assert.equal(pads.length, 2);
+  assert.equal(Math.abs(Number(pads[0][2]) - Number(pads[1][2])), 0, "axial holes share one row");
+  assert.equal(Math.abs(Number(pads[0][1]) - Number(pads[1][1])), 10.16, "the user's bend spacing is preserved");
+});
+
 // ---------------------------------------------------------------------------
 // How many rows of pins, which is read and never assumed
 // ---------------------------------------------------------------------------
@@ -617,15 +681,13 @@ test("supplying the body size builds the solid from it", async () => {
   assert.doesNotMatch(text, /,1\.5\)/, "and no 1.5 mm default survives anywhere");
 });
 
-test("every outstanding value is asked for in one pass, not one round trip each", async () => {
-  // The footprint and the 3D body fail independently. Asking for one and then the
-  // other turns a part needing four numbers into four separate refusals.
+test("a missing optional 3D body does not block an otherwise answerable footprint", async () => {
   const error = await refusal(
     withDimensions({ pitchMm: 1.27, leadSides: 2, bodyLengthMm: null, bodyWidthMm: null, bodyHeightMm: null })
   );
   const fields = error.needs.map((need) => need.field);
   assert.ok(fields.some((field) => field.startsWith("land")), "the land pattern is asked for");
-  assert.ok(fields.includes("bodyLengthMm"), "and the body, in the same refusal");
+  assert.equal(fields.some((field) => field.startsWith("body")), false, "optional STEP dimensions do not block CAD");
 });
 
 test("a through-hole footprint has a silkscreen outline", async () => {

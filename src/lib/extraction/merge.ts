@@ -1,9 +1,9 @@
 import type { DatasheetText } from "../pdftext";
-import { pinTypeFrom, type Citation, type Extracted, type ExtractionMethod, type PartRecord, type PinElectricalType, type PinRecord } from "../types";
+import { auxiliaryPadSchema, terminalPadSchema, pinTypeFrom, type AuxiliaryPadRecord, type Citation, type Extracted, type ExtractionMethod, type PartRecord, type PinElectricalType, type PinRecord, type TerminalPadRecord } from "../types";
 import { extractionFields, type ExtractionField, type ExtractionResult, type ModelValue } from "./contracts";
 import { citableText, quarantinedRegions } from "./untrusted";
 import { RANGE_FIELDS as RANGE_FIELD_LIST } from "../review";
-import { statedLeadCount } from "../packagevariants";
+import { leadFormFromPackageName, mountingFromPackageName, statedLeadCount } from "../packagevariants";
 import { gridPosition, isGridAddressed } from "../geometry";
 import { labelForField } from "../review";
 
@@ -622,8 +622,16 @@ export function verifyCitation(doc: DatasheetText, claimed: ModelValue): Citatio
   const evidence = citableText(page.text, quarantinedRegions(page.text));
 
   // A pin table is judged by whether its rows are on the page, not by matching
-  // one string.
+  // one string. Arrays are no longer synonymous with pin tables: auxiliary
+  // footprint features are structured arrays too, and those must fall through
+  // to the rendered-page citation path instead of being cast to pins.
   if (Array.isArray(claimed.value)) {
+    const isPinTable = claimed.value.length > 0 && claimed.value.every((row) =>
+      row !== null && typeof row === "object" &&
+      (typeof (row as { number?: unknown }).number === "string" || typeof (row as { number?: unknown }).number === "number") &&
+      typeof (row as { name?: unknown }).name === "string"
+    );
+    if (!isPinTable) return null;
     const pins = claimed.value as PinRecord[];
     if (!verifyPinTable(evidence, pins)) return null;
     return { page: page.page, snippet: `${pins.length}-row pin table`, region: null };
@@ -1145,6 +1153,38 @@ function alreadyAnswered(existing: Extracted<unknown>): boolean {
   return existing.value !== null;
 }
 
+function normalizeAuxiliaryPads(value: unknown): { ok: true; pads: AuxiliaryPadRecord[] } | { ok: false; reason: string } {
+  if (!Array.isArray(value)) return { ok: false, reason: "the auxiliary footprint features were not returned as an array" };
+  const parsedPads = value.map((entry) => auxiliaryPadSchema.safeParse(entry));
+  if (parsedPads.some((entry) => !entry.success)) {
+    return { ok: false, reason: "at least one auxiliary pad or hole had an unsupported or incomplete geometry" };
+  }
+  const pads = parsedPads.flatMap((entry) => entry.success ? [entry.data] : []);
+  const invalidHole = pads.some((pad) =>
+    pad.kind === "smd-pad"
+      ? pad.drillMm !== undefined
+      : pad.drillMm === undefined || pad.drillMm > Math.min(pad.widthMm, pad.heightMm)
+  );
+  if (invalidHole) return { ok: false, reason: "an auxiliary hole lacked a drill or its drill exceeded the pad" };
+  const positions = new Set(pads.map((pad) => `${pad.xMm.toFixed(6)},${pad.yMm.toFixed(6)}`));
+  if (positions.size !== pads.length) return { ok: false, reason: "more than one auxiliary feature occupied the same centre" };
+  return { ok: true, pads };
+}
+
+function normalizeTerminalPads(value: unknown): { ok: true; pads: TerminalPadRecord[] } | { ok: false; reason: string } {
+  if (!Array.isArray(value)) return { ok: false, reason: "the numbered-land decision was not returned as an array" };
+  const parsed = value.map((entry) => terminalPadSchema.safeParse(entry));
+  if (parsed.some((entry) => !entry.success)) {
+    return { ok: false, reason: "at least one numbered land had unsupported or incomplete geometry" };
+  }
+  const pads = parsed.flatMap((entry) => entry.success ? [entry.data] : []);
+  const numbers = new Set(pads.map((pad) => pad.number));
+  if (numbers.size !== pads.length) return { ok: false, reason: "a numbered land appeared more than once" };
+  const positions = new Set(pads.map((pad) => `${pad.xMm.toFixed(6)},${pad.yMm.toFixed(6)}`));
+  if (positions.size !== pads.length) return { ok: false, reason: "two numbered lands occupied the same centre" };
+  return { ok: true, pads };
+}
+
 export function mergeModelValues(
   part: PartRecord,
   doc: DatasheetText,
@@ -1244,6 +1284,23 @@ export function mergeModelValues(
       value = range;
     }
 
+    if (field === "dimensions.auxiliaryPads") {
+      const normalized = normalizeAuxiliaryPads(value);
+      if (!normalized.ok) {
+        rejected.push({ field, reason: normalized.reason });
+        continue;
+      }
+      value = normalized.pads;
+    }
+    if (field === "dimensions.terminalPads") {
+      const normalized = normalizeTerminalPads(value);
+      if (!normalized.ok) {
+        rejected.push({ field, reason: normalized.reason });
+        continue;
+      }
+      value = normalized.pads;
+    }
+
     if (field === "pins") {
       const normalized = normalizeModelPins(claimed.value);
       if (!normalized.ok) {
@@ -1260,6 +1317,41 @@ export function mergeModelValues(
           `The reader returned a pin table that was discarded rather than recorded: ${normalized.reason}.`
         );
         continue;
+      }
+      // Passive interconnects and magnetics often draw every physical pad but
+      // name only the electrically connected ones in the schematic.  Rejecting
+      // that partial list loses a perfectly usable footprint; calling the
+      // omitted pads NC would claim more than the document says.  Where the
+      // document identifies this passive class, a cited pin count establishes
+      // the physical 1..N sequence, and the reader recovered at least half of
+      // it, preserve the unnamed physical terminals with their printed numbers
+      // as neutral names.  Active ICs are excluded: a missing MCU pin function
+      // is not an optional label.
+      const declaredCount = merged.pinCount.value;
+      const passiveInterconnect = /\b(?:connector|transformer|magnetics?|inductor|common[ -]mode choke|relay|socket|header)\b/i.test(
+        [merged.packageType.value ?? "", ...doc.pages.slice(0, 3).map((page) => page.text)].join("\n")
+      );
+      const numeric = normalized.pins.every((pin) => /^\d+$/.test(pin.number));
+      const distinct = new Set(normalized.pins.map((pin) => pin.number)).size === normalized.pins.length;
+      if (
+        passiveInterconnect && numeric && distinct && declaredCount !== null && declaredCount <= 200 &&
+        normalized.pins.length >= Math.ceil(declaredCount / 2) && normalized.pins.length < declaredCount &&
+        normalized.pins.every((pin) => Number(pin.number) >= 1 && Number(pin.number) <= declaredCount)
+      ) {
+        const byNumber = new Map(normalized.pins.map((pin) => [Number(pin.number), pin]));
+        const missingNumbers: number[] = [];
+        normalized.pins = Array.from({ length: declaredCount }, (_, index) => {
+          const number = index + 1;
+          const read = byNumber.get(number);
+          if (read) return read;
+          missingNumbers.push(number);
+          return { number: String(number), name: String(number), electricalType: "unspecified" as const };
+        });
+        merged.notes.push(
+          `The package establishes ${declaredCount} physical terminals, while its schematic names only ` +
+            `${declaredCount - missingNumbers.length}. Terminals ${missingNumbers.join(", ")} are kept by number with ` +
+            `unspecified function; they are not labelled NC or assigned a behavior the document does not state.`
+        );
       }
       if (!isGapFreeSequence(normalized.pins)) {
         rejected.push({
@@ -1405,6 +1497,55 @@ export function mergeModelValues(
   // A FOOT READ OFF A PACKAGE THAT HAS NONE. See `dropStraightLeadContact`.
   dropStraightLeadContact(merged, merged.dimensions, "", rejected);
 
+  // Mounting technology is part of an unambiguous package designator's
+  // definition.  A WLP, BGA or QFN is surface mount; a PDIP or DO-204AL is
+  // through-hole.  Keeping a model's uncited repetition of that same fact made
+  // an otherwise fully traceable part ask the user to verify something already
+  // established by the selected package.  Canonicalise it once at the merge
+  // boundary so every downstream caller sees the same evidence.  Unknown or
+  // mixed-form package names still return null and keep the ordinary question.
+  const namedMounting = mountingFromPackageName(merged.packageType.value);
+  if (namedMounting !== null) {
+    const readMounting = merged.dimensions.mounting.value;
+    if (readMounting !== null && readMounting !== namedMounting) {
+      merged.notes.push(
+        `The reader described ${merged.packageType.value} as ${readMounting}; the selected standard package ` +
+          `designation defines it as ${namedMounting}, which is the mounting used.`
+      );
+    }
+    merged.dimensions.mounting = {
+      value: namedMounting,
+      confidence: 1,
+      method: "deterministic",
+      citation: null
+    };
+    const mountingIndex = uncited.indexOf("dimensions.mounting");
+    if (mountingIndex >= 0) uncited.splice(mountingIndex, 1);
+  }
+
+  // As with mounting, the standard family itself defines whether a QFP/SOIC
+  // has formed gull-wing leads or a QFN/BGA has underside lands.  This is a
+  // package classification, not a dimensional guess.  Canonicalising it keeps
+  // an uncited model repetition from blocking otherwise cited copper.
+  const namedLeadForm = leadFormFromPackageName(merged.packageType.value);
+  if (namedLeadForm !== null) {
+    const readLeadForm = merged.dimensions.leadForm.value;
+    if (readLeadForm !== null && readLeadForm !== namedLeadForm) {
+      merged.notes.push(
+        `The reader described ${merged.packageType.value} as ${readLeadForm}; the selected standard package ` +
+          `designation defines its lead form as ${namedLeadForm}, which is the form used.`
+      );
+    }
+    merged.dimensions.leadForm = {
+      value: namedLeadForm,
+      confidence: 1,
+      method: "deterministic",
+      citation: null
+    };
+    const formIndex = uncited.indexOf("dimensions.leadForm");
+    if (formIndex >= 0) uncited.splice(formIndex, 1);
+  }
+
   if (filled.length > 0) {
     merged.notes = [
       ...merged.notes,
@@ -1469,6 +1610,7 @@ export function mergeModelValues(
     const padWidth = merged.dimensions.thermalPadWidthMm.value;
     if (padPins !== null && declaredLeads !== null && last !== undefined) {
       merged.exposedPad = true;
+      merged.exposedPadPin = last;
       merged.pins = { ...merged.pins, value: padPins.slice(0, -1) };
       // AND THE COUNT, which was left behind until 2026-08-18.
       //
@@ -1567,6 +1709,7 @@ export function mergeModelValues(
       // discarding the entry whole would throw them away with it.
       let pins: PinRecord[] | undefined;
       let exposedPad: boolean | undefined;
+      let exposedPadPin: PinRecord | null | undefined;
       let citation: Citation | null | undefined;
       if (table.pins !== undefined) {
         const normalized = normalizeModelPins(table.pins);
@@ -1618,6 +1761,20 @@ export function mergeModelValues(
       }
 
       const dimensions = packageDimensions(doc, table.dimensions, renderedPages);
+      if (pins && dimensions) {
+        const declaredLeads = dimensions.leadCount?.value ?? statedLeadCount(table.packageType);
+        if (lastRowIsNumberedThermalPad({
+          pins,
+          exposedPad: exposedPad ?? false,
+          declaredLeads,
+          thermalPadLengthMm: dimensions.thermalPadLengthMm?.value ?? null,
+          thermalPadWidthMm: dimensions.thermalPadWidthMm?.value ?? null
+        })) {
+          exposedPadPin = pins[pins.length - 1] ?? null;
+          pins = pins.slice(0, -1);
+          exposedPad = true;
+        }
+      }
       // The same correction, on the numbers that actually build a family
       // datasheet's copper. A rule applied to the flat block alone is a rule
       // that does not run on most of this corpus.
@@ -1636,7 +1793,7 @@ export function mergeModelValues(
         // chooser offering two options with one label again.
         ...(table.outlineCode ? { outlineCode: table.outlineCode } : {}),
         ...(table.alsoKnownAs && table.alsoKnownAs.length > 0 ? { alsoKnownAs: table.alsoKnownAs } : {}),
-        ...(pins ? { pins, exposedPad, citation } : {}),
+        ...(pins ? { pins, exposedPad, exposedPadPin, citation } : {}),
         ...(dimensions ? { dimensions } : {})
       });
     }
@@ -1703,6 +1860,7 @@ export function mergeModelValues(
       if (seen.pins === undefined && entry.pins !== undefined) {
         seen.pins = entry.pins;
         seen.exposedPad = entry.exposedPad;
+        seen.exposedPadPin = entry.exposedPadPin;
         seen.citation = entry.citation;
       }
       if (entry.dimensions) {
@@ -1885,6 +2043,16 @@ function packageDimensions(
       const range = asRange(value);
       if (!range) continue;
       value = range;
+    }
+    if (field === "dimensions.auxiliaryPads") {
+      const normalized = normalizeAuxiliaryPads(value);
+      if (!normalized.ok) continue;
+      value = normalized.pads;
+    }
+    if (field === "dimensions.terminalPads") {
+      const normalized = normalizeTerminalPads(value);
+      if (!normalized.ok) continue;
+      value = normalized.pads;
     }
 
     let citation = verifyCitation(doc, { value, page: claimed.page });

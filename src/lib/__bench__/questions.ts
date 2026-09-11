@@ -94,6 +94,8 @@ function oracleHolds(entry: DimensionOracleEntry, field: RequiredInput["field"])
       return range(entry.thermalPadLengthMm);
     case "thermalPadWidthMm":
       return range(entry.thermalPadWidthMm);
+    case "thermalPadRotationDeg":
+      return null;
     case "landPadLengthMm":
       return fromLand((land) => land.padLengthMm);
     case "landPadWidthMm":
@@ -102,6 +104,8 @@ function oracleHolds(entry: DimensionOracleEntry, field: RequiredInput["field"])
       return fromLand((land) => land.spanMm);
     case "landSpanCrossMm":
       return fromLand((land) => land.spanCrossMm);
+    case "terminalPads":
+      return null;
     // NOT JUDGEABLE, and deliberately not silently passed. See `UNHOLDABLE`.
     case "leadDiameterMm":
     case "leadsPerSide":
@@ -128,7 +132,14 @@ function oracleHolds(entry: DimensionOracleEntry, field: RequiredInput["field"])
  * reported as UNJUDGED and they are a schema gap to close.
  */
 const SETTING_FIELDS = new Set<string>(["formedLeadSpanMm", "formedLeadContactMm"]);
-const UNHOLDABLE = new Set<string>(["leadDiameterMm", "leadsPerSide", "vacantLeadSlot", "mounting"]);
+const UNHOLDABLE = new Set<string>([
+  "leadDiameterMm",
+  "leadsPerSide",
+  "vacantLeadSlot",
+  "mounting",
+  "thermalPadRotationDeg",
+  "terminalPads",
+]);
 
 /**
  * Did the MODEL return this field, under the prompt in force today?

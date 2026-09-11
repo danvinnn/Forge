@@ -32,6 +32,8 @@ import { type ConfidenceCheck } from "../../../lib/confidence";
 import { type ReviewItem } from "../../../lib/review";
 import type { Confirmation } from "../../../lib/confirm";
 import { type PartRecord } from "../../../lib/types";
+import { unknown } from "../../../lib/types";
+import { leadFormFromPackageName, mountingFromPackageName, sameDesignatorName } from "../../../lib/packagevariants";
 
 /**
  * Retrieval found a datasheet, correctly formatted and complete, for a DIFFERENT
@@ -166,7 +168,8 @@ async function extractPart(
   partNumberHint?: string,
   packageHint?: string,
   /** What is left of the route's own budget when this is called. */
-  budgetMs = ROUTE_BUDGET_MS
+  budgetMs = ROUTE_BUDGET_MS,
+  supplemental = false
 ): Promise<{ part: PartRecord; method: string; doc: DatasheetText; rendered: RenderedPage[] }> {
   const { doc, part } = await extractPartRecord(ref.fileName, ref.bytes, ref.pdfUrl, {
     packageType: packageHint
@@ -183,7 +186,7 @@ async function extractPart(
   // Only reachable on the LOOKUP path, because it is about what retrieval found.
   // An uploaded PDF is whatever the user meant to give us and is never second
   // guessed here.
-  if (looksLikeWrongDocument(doc)) {
+  if (!supplemental && looksLikeWrongDocument(doc)) {
     throw new WrongDocumentError(ref.pdfUrl ?? ref.fileName);
   }
 
@@ -294,6 +297,77 @@ async function extractPart(
       rendered: []
     };
   }
+}
+
+const packageTokens = (value: string) => (value.toUpperCase().match(/[A-Z]+|\d+/g) ?? [])
+  .filter((token) => !["PIN", "PINS", "LEAD", "LEADS", "PACKAGE", "PLASTIC"].includes(token));
+
+function supplementalDrawingFor<T extends { kind: string; label: string }>(resources: readonly T[], selected: string, pinCount: number | null): T | null {
+  const wanted = packageTokens(selected);
+  const candidates = resources.filter((resource) => {
+    if (resource.kind !== "package-drawing") return false;
+    if (sameDesignatorName(resource.label, selected)) return true;
+    const found = packageTokens(resource.label);
+    const identity = wanted.filter((token) => !/^\d+$/.test(token));
+    const identityMatches = identity.length > 0 && identity.every((token) => found.includes(token));
+    const printedCount = /\|\s*(\d{1,3})\b/.exec(resource.label)?.[1];
+    return identityMatches && (printedCount === undefined || pinCount === null || Number(printedCount) === pinCount);
+  });
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function mergeSupplementalDrawing(primary: PartRecord, supplement: PartRecord, selected: string, sourceUrl: string): PartRecord {
+  const packageWasExcluded = primary.drawnPackages !== undefined && primary.drawnPackages.length > 0 &&
+    !primary.drawnPackages.some((label) => sameDesignatorName(label, selected));
+  const dimensions = Object.fromEntries(
+    Object.entries(primary.dimensions).map(([key, field]) => {
+      const supplied = supplement.dimensions[key as keyof PartRecord["dimensions"]];
+      if (supplied?.value !== null && supplied?.value !== undefined) {
+        // The citation's page belongs to the supplemental PDF, while the
+        // readout renders the primary datasheet. Mark manufacturer provenance
+        // explicitly and carry the exact URL in the note below rather than
+        // displaying the right page number against the wrong document.
+        return [key, { ...supplied, confidence: 1, method: "vendor", citation: null }];
+      }
+      return [key, packageWasExcluded ? unknown() : field];
+    })
+  ) as PartRecord["dimensions"];
+  const namedMounting = mountingFromPackageName(selected);
+  if (namedMounting !== null) {
+    dimensions.mounting = { value: namedMounting, confidence: 1, method: "deterministic", citation: null };
+  }
+  const namedLeadForm = leadFormFromPackageName(selected);
+  if (namedLeadForm !== null) {
+    dimensions.leadForm = { value: namedLeadForm, confidence: 1, method: "deterministic", citation: null };
+  }
+  // Standard package semantics are added after every extraction.  They prove
+  // mounting technology and lead form, but do not prove that this supplemental
+  // drawing was actually read.  Counting those two generated fields as a
+  // successful recovery cleared the primary record's package data after an
+  // otherwise empty model answer.  Require at least one value originating in
+  // the drawing itself; auxiliaryPads=[] is still a positive inspected answer.
+  const readAnyDimension = Object.entries(supplement.dimensions).some(
+    ([key, field]) => key !== "mounting" && key !== "leadForm" && field.value !== null
+  );
+  if (!readAnyDimension) return primary;
+  return {
+    ...primary,
+    dimensions,
+    packageOutlineCode: supplement.packageOutlineCode.value !== null
+      ? { ...supplement.packageOutlineCode, confidence: 1, method: "vendor", citation: null }
+      : primary.packageOutlineCode,
+    jedecOutline: supplement.jedecOutline.value !== null
+      ? { ...supplement.jedecOutline, confidence: 1, method: "vendor", citation: null }
+      : primary.jedecOutline,
+    // `VendorLandEvidence.page` has no document identity. Reusing a page from
+    // the supplemental PDF would make the primary datasheet viewer show the
+    // wrong sheet, so only the outline inputs cross this boundary for now.
+    vendorLandPattern: packageWasExcluded ? null : primary.vendorLandPattern,
+    exposedPad: supplement.exposedPad,
+    exposedPadPin: supplement.exposedPadPin,
+    drawnPackages: [...new Set([...(packageWasExcluded ? [] : primary.drawnPackages ?? []), selected])],
+    notes: [`Recovered the selected ${selected} package drawing from the manufacturer's official PDF: ${sourceUrl}.`, ...primary.notes, ...supplement.notes]
+  };
 }
 
 export async function POST(request: Request) {
@@ -450,6 +524,49 @@ export async function POST(request: Request) {
   }
   part.sourceUrl = ref.pdfUrl;
   part.notes = [`Resolved via ${resolver.name} (${method}): ${ref.pdfUrl ?? ref.fileName}.`, ...part.notes];
+
+  // A family datasheet can list an orderable package while placing that
+  // package's registered outline in a separate manufacturer PDF. If the main
+  // reading positively says it found drawings only for other packages, exhaust
+  // that official route before asking the user for dimensions already linked
+  // by the vendor. A unique package-identity match is required; archive order
+  // or a merely similar family never chooses a drawing.
+  if (
+    packageType && manufacturer &&
+    part.drawnPackages !== undefined && part.drawnPackages.length > 0 &&
+    !part.drawnPackages.some((label) => sameDesignatorName(label, packageType))
+  ) {
+    try {
+      const { discoverOfficialResources, importOfficialPdf } = await import("../../../lib/retrieval/resolvers/resources");
+      const resources = await discoverOfficialResources(partNumber, manufacturer, packageType);
+      const drawing = supplementalDrawingFor(resources, packageType, part.pinCount.value);
+      if (drawing) {
+        const pdf = await importOfficialPdf(drawing.url, manufacturer);
+        const remaining = modelBudgetMs(ROUTE_BUDGET_MS, Date.now() - startedAt);
+        if (worthAsking(remaining)) {
+          const read = await extractPart(
+            { fileName: pdf.fileName, bytes: pdf.bytes, pdfUrl: pdf.url },
+            mode,
+            undefined,
+            packageType,
+            remaining,
+            true
+          );
+          part = mergeSupplementalDrawing(part, read.part, packageType, pdf.url);
+          method = `${method} + official package drawing`;
+        }
+      }
+    } catch (error) {
+      // This is a recovery route, not a new dependency. Preserve the primary
+      // reading and its honest package-specific refusal when discovery, download
+      // or the supplemental reader is unavailable.
+      console.error("[lookup] official package-drawing recovery failed", {
+        partNumber,
+        packageType,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
 
   // THE SECOND HALF, which this route did not do until 2026-08-16.
   //

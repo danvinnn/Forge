@@ -187,15 +187,155 @@ test("on a REAL pdf the second pass happens, and carries the pages the model ask
   const outcome = await runExtraction(part, real, buffer, model, "LMP7704-SP.pdf");
   assert.ok(outcome);
 
-  assert.equal(model.seen.length, 2, "both passes ran");
+  assert.equal(model.seen.length, 3, "the broad and drawing passes ran before the independently checked pin recovery");
   assert.equal(model.seen[0].images.length, 0, "first pass: text only");
   assert.ok(model.seen[1].images.length > 0, "second pass: the page was rendered and attached");
+  assert.deepEqual(model.seen[2].fields, ["pins"]);
   assert.ok(
     model.seen[1].images.map((image) => image.page).includes(outline.page),
     "and the page the MODEL asked for is among them: nothing may drop its choice"
   );
   assert.ok(outcome.renderedPages.includes(outline.page));
   assert.equal(outcome.lookedAtPages, true);
+});
+
+test("a connector gets one focused recovery read for a missed auxiliary-pad inventory", async () => {
+  const { fileURLToPath } = await import("node:url");
+  const { extractDatasheetText } = await import("../../pdftext");
+  const path = fileURLToPath(new URL("../../../../test-data/LMP7704-SP.pdf", import.meta.url));
+  const bytes = readFileSync(path);
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const real = await extractDatasheetText(buffer);
+  const drawing = real.pages.find((page) => /PACKAGE OUTLINE/.test(page.text));
+  assert.ok(drawing);
+  const part = buildPartRecord(real, "ACME-CONNECTOR.pdf", undefined, { packageType: "FFC connector" });
+  const pads = [
+    { kind: "smd-pad" as const, xMm: -3, yMm: 1, widthMm: 2, heightMm: 3, shape: "rect" as const },
+    { kind: "smd-pad" as const, xMm: 3, yMm: 1, widthMm: 2, heightMm: 3, shape: "rect" as const }
+  ];
+  const connectorPins = Array.from({ length: 8 }, (_, index) => ({
+    number: String(index + 1), name: String(index + 1), electricalType: "passive" as const
+  }));
+  const model = stub([
+    { values: {}, pagesWorthRendering: [drawing.page] },
+    { values: {}, declined: ["dimensions.auxiliaryPads"] },
+    { values: { pins: { value: connectorPins, page: drawing.page } } },
+    { values: { "dimensions.auxiliaryPads": { value: pads, page: drawing.page } } }
+  ]);
+
+  const outcome = await runExtraction(part, real, buffer, model, "ACME-CONNECTOR.pdf", "ACME-CONNECTOR");
+  assert.ok(outcome);
+  assert.equal(model.seen.length, 4, "narrow pin and auxiliary recovery follow the ordinary text and drawing passes");
+  assert.deepEqual(model.seen[2].fields, ["pins"]);
+  assert.deepEqual(model.seen[3].fields, ["dimensions.auxiliaryPads"]);
+  assert.ok(model.seen[3].images.length > 0, "the recovery reuses the already-rendered evidence");
+  assert.equal(outcome.part.pins.value?.length, 8);
+  assert.deepEqual(outcome.part.dimensions.auxiliaryPads?.value, pads);
+});
+
+test("an inspected irregular board layout gets one narrow numbered-land recovery", async () => {
+  const { fileURLToPath } = await import("node:url");
+  const { extractDatasheetText } = await import("../../pdftext");
+  const path = fileURLToPath(new URL("../../../../test-data/LMP7704-SP.pdf", import.meta.url));
+  const bytes = readFileSync(path);
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const real = await extractDatasheetText(buffer);
+  const drawing = real.pages.find((page) => /PACKAGE OUTLINE/.test(page.text));
+  assert.ok(drawing);
+  const part = buildPartRecord(real, "ACME-XDFN.pdf", undefined, { packageType: "XDFN4" });
+  part.pinCount = { value: 4, confidence: 1, method: "user", citation: null };
+  part.pins = {
+    value: Array.from({ length: 4 }, (_, index) => ({
+      number: String(index + 1), name: `P${index + 1}`, electricalType: "unspecified" as const
+    })),
+    confidence: 1,
+    method: "user",
+    citation: null
+  };
+  const terminalPads = [
+    { number: "1", xMm: -0.325, yMm: 0.405, widthMm: 0.26, heightMm: 0.39, shape: "rect" as const },
+    { number: "2", xMm: -0.325, yMm: -0.405, widthMm: 0.26, heightMm: 0.39, shape: "rect" as const },
+    { number: "3", xMm: 0.325, yMm: -0.405, widthMm: 0.26, heightMm: 0.39, shape: "rect" as const },
+    { number: "4", xMm: 0.325, yMm: 0.405, widthMm: 0.26, heightMm: 0.39, shape: "rect" as const }
+  ];
+  const model = stub([
+    { values: {}, pagesWorthRendering: [drawing.page] },
+    { values: {} },
+    { values: { "dimensions.terminalPads": { value: terminalPads, page: drawing.page } } }
+  ]);
+
+  const outcome = await runExtraction(part, real, buffer, model, "ACME-XDFN.pdf", "ACME-XDFN");
+  assert.ok(outcome);
+  assert.equal(model.seen.length, 3);
+  assert.deepEqual(model.seen[2].fields, ["dimensions.terminalPads"]);
+  assert.deepEqual(outcome.part.dimensions.terminalPads?.value, terminalPads);
+});
+
+test("an active-device pin recovery is accepted only when PDF geometry independently confirms every row", async () => {
+  const { fileURLToPath } = await import("node:url");
+  const { extractDatasheetText } = await import("../../pdftext");
+  const path = fileURLToPath(new URL("../../../../test-data/LMP7704-SP.pdf", import.meta.url));
+  const bytes = readFileSync(path);
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const real = await extractDatasheetText(buffer);
+  const names = [
+    "OUT A", "IN A-", "IN A+", "V+", "IN B+", "IN B-", "OUT B",
+    "OUT C", "IN C-", "IN C+", "V-", "IN D+", "IN D-", "OUT D"
+  ];
+  const pins = names.map((name, index) => ({
+    number: String(index + 1), name, electricalType: "unspecified" as const
+  }));
+  const first = {
+    values: {
+      pinCount: { value: 14, page: 3 },
+      packageType: { value: "14-pin CFP", page: 3 }
+    }
+  } satisfies ExtractionResult;
+
+  const acceptedModel = stub([first, { values: { pins: { value: pins, page: 3 } } }]);
+  const accepted = await runExtraction(
+    buildPartRecord(real, "LMP7704-SP.pdf"), real, buffer, acceptedModel, "LMP7704-SP.pdf", "LMP7704-SP"
+  );
+  assert.deepEqual(acceptedModel.seen[1].fields, ["pins"]);
+  assert.equal(accepted?.part.pins.value?.length, 14);
+
+  const shifted = pins.map((pin, index) => index === 0 ? { ...pin, name: "IN A-" } : pin);
+  const rejectedModel = stub([first, { values: { pins: { value: shifted, page: 3 } } }]);
+  const rejected = await runExtraction(
+    buildPartRecord(real, "LMP7704-SP.pdf"), real, buffer, rejectedModel, "LMP7704-SP.pdf", "LMP7704-SP"
+  );
+  assert.equal(rejected?.part.pins.value, null, "one shifted name keeps the whole proposed table out of the record");
+});
+
+test("a missed gull-wing outline gets one focused recovery before asking for a land pattern", async () => {
+  const { fileURLToPath } = await import("node:url");
+  const { extractDatasheetText } = await import("../../pdftext");
+  const path = fileURLToPath(new URL("../../../../test-data/LMP7704-SP.pdf", import.meta.url));
+  const bytes = readFileSync(path);
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const real = await extractDatasheetText(buffer);
+  const drawing = real.pages.find((page) => /PACKAGE OUTLINE/.test(page.text));
+  assert.ok(drawing);
+  const part = buildPartRecord(real, "ACME-SOIC.pdf", undefined, { packageType: "SOIC-8" });
+  const model = stub([
+    { values: {}, pagesWorthRendering: [drawing.page] },
+    { values: {} },
+    { values: {
+      "dimensions.pitchMm": { value: 1.27, page: drawing.page },
+      "dimensions.leadWidthMm": { value: { minMm: 0.31, maxMm: 0.51 }, page: drawing.page },
+      "dimensions.leadSpanMm": { value: { minMm: 5.8, maxMm: 6.2 }, page: drawing.page },
+      "dimensions.leadContactMm": { value: { minMm: 0.4, maxMm: 1.27 }, page: drawing.page },
+      "dimensions.leadSides": { value: 2, page: drawing.page }
+    } }
+  ]);
+
+  const outcome = await runExtraction(part, real, buffer, model, "ACME-SOIC.pdf", "ACME-SOIC");
+  assert.ok(outcome);
+  assert.equal(model.seen.length, 4);
+  assert.deepEqual(model.seen[2].fields, ["pins"]);
+  assert.ok(model.seen[3].fields.includes("dimensions.leadSpanMm"));
+  assert.ok(!model.seen[3].fields.includes("dimensions.bodyLengthMm"), "the retry asks only footprint-critical gaps");
+  assert.deepEqual(outcome.part.dimensions.leadSpanMm.value, { minMm: 5.8, maxMm: 6.2 });
 });
 
 test("a native PDF replaces the focused second pass instead of duplicating it", async () => {
@@ -213,6 +353,25 @@ test("a native PDF replaces the focused second pass instead of duplicating it", 
   assert.equal(model.seen.length, 1);
   assert.equal(model.seen[0].pages.length, sparse.pages.length, "pass one is the whole document");
   assert.ok(model.seen[0].sourceDocument, "the first pass receives the native PDF");
+});
+
+test("a short mixed PDF renders image-only drawing sheets despite searchable notice text", async () => {
+  const path = join(process.cwd(), "test-data", "scanned-no-text-layer.pdf");
+  const bytes = readFileSync(path);
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const mixed = datasheetTextFromPages([
+    "",
+    `IMPORTANT NOTICE ${"searchable legal text ".repeat(40)}`,
+    ""
+  ]);
+  const part = buildPartRecord(mixed, "drawing-with-notice.pdf");
+  const model = stub([{ values: {} }], true);
+
+  await runExtraction(part, mixed, buffer, model, "drawing-with-notice.pdf");
+
+  assert.equal(model.seen.length, 1, "all sheets are supplied in the first visual read");
+  assert.equal(model.seen[0].images.length, 3);
+  assert.equal(model.seen[0].sourceDocument, undefined, "high-resolution sheet renders replace native-PDF fallback");
 });
 
 test("a rendered figure does not overwrite a pin list the first pass already read", async () => {
@@ -401,9 +560,10 @@ test("a document with one pinout carries no per-package tables", async () => {
   assert.equal(run?.part.packagesInThisDocument, undefined);
 });
 
-test("the pipeline makes at most two model calls", async () => {
-  // The count is the point. Three passes meant a workaround was living in the
-  // pipeline; two is the text pass and the render pass, both structural.
+test("an ordinary package makes at most two model calls", async () => {
+  // The count is the point for ordinary packages: text plus drawing. Connector
+  // interfaces have one measured, explicitly tested exception above for the
+  // structured auxiliary-feature inventory that makes their footprint whole.
   const model = stub([{ values: {}, pagesWorthRendering: [3] }, { values: {} }]);
   const part = buildPartRecord(doc, "ACME555.pdf");
   await runExtraction(part, doc, NOT_A_PDF, model, "ACME555.pdf", "ACME555");

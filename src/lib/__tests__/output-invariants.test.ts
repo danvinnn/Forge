@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { geometryViolations, symbolViolations } from "../confidence";
 import type { FootprintGeometry, SymbolGeometry } from "../geometry";
 import type { ResolvedPart } from "../types";
+import { buildSymbolGeometry } from "../exporters";
 
 /**
  * THE OUTPUT INVARIANTS THE CORPUS CANNOT EXERCISE.
@@ -106,6 +107,17 @@ test("a symbol pin with a non-finite length is refused", () => {
   // the characters `NaN`, and one format reads it as zero.
   const broken = symbol({ pins: symbol().pins.map((pin, index) => (index === 1 ? { ...pin, lengthMm: Number.NaN } : pin)) });
   assert.match(symbolViolations(broken, part)[0] ?? "", /nothing to attach a wire to/);
+});
+
+test("a numbered electrical exposed pad is emitted as a schematic terminal", () => {
+  const withElectricalPad = {
+    ...part,
+    exposedPad: true,
+    exposedPadPin: { number: "3", name: "GND", electricalType: "power" as const }
+  } as ResolvedPart;
+  const built = buildSymbolGeometry(withElectricalPad);
+  assert.equal(built.pins.find((pin) => pin.number === "3")?.name, "GND");
+  assert.deepEqual(symbolViolations(built, withElectricalPad), []);
 });
 
 test("a thermal via that reaches off its own pad is refused", () => {

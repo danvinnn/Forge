@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { documentNamesPart } from "../identity";
 import { buildPartVariants } from "../partnumber";
 import { ManufacturerResolver } from "../resolvers/manufacturer";
+import { datasheetTextFromPages, namesThePartAsSubject } from "../../pdftext";
 
 // A REAL datasheet, not a synthetic one. The bug this guards against was that a
 // real, well-formed PDF for the wrong device passes every structural check, so a
@@ -58,6 +59,16 @@ test("the stem never chews into a short part number", () => {
   // A trailing letter-then-digits is an OPTION code, handled by the older rule
   // above and left alone by this one: STM32F103C8 must not also lose "03".
   assert.ok(!buildPartVariants("STM32F103C8").includes("STM32F1"));
+});
+
+test("a multi-segment product identity is never reduced to its underlying chip", () => {
+  assert.deepEqual(buildPartVariants("ESP32-S3-WROOM-1"), ["ESP32-S3-WROOM-1"]);
+});
+
+test("a terminal-x family title identifies an exact orderable member", () => {
+  const doc = datasheetTextFromPages(["STM32H573xx Arm Cortex-M33 microcontrollers"]);
+  assert.equal(namesThePartAsSubject(doc, "STM32H573II"), true);
+  assert.equal(namesThePartAsSubject(doc, "STM32H563II"), false);
 });
 
 test("the most specific variant is still tried first", () => {

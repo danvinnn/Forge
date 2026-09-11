@@ -101,6 +101,24 @@ test("a model value that is not on the page it claims gets NO citation", () => {
   );
 });
 
+test("a package designation settles mounting without asking the user to confirm a model repetition", () => {
+  const part = deterministic();
+  part.packageType = { value: "6-bump WLP", confidence: 1, method: "user", citation: null };
+  const result: ExtractionResult = {
+    values: { "dimensions.mounting": { value: "smd", page: 99 } }
+  };
+
+  const { part: merged, uncited } = mergeModelValues(part, doc, result, "test-model");
+
+  assert.deepEqual(merged.dimensions.mounting, {
+    value: "smd",
+    confidence: 1,
+    method: "deterministic",
+    citation: null
+  });
+  assert.ok(!uncited.includes("dimensions.mounting"));
+});
+
 test("a value the model invented outright is never citable", () => {
   const part = deterministic();
   const result: ExtractionResult = {
@@ -371,6 +389,62 @@ test("a model pin table that does not number 1..N is discarded, not stored", () 
     merged.part.notes.some((note) => /discarded/i.test(note)),
     "and the record says so rather than going quiet"
   );
+});
+
+test("a passive schematic may leave physical terminals unnamed without losing its footprint", () => {
+  const passiveDoc = datasheetTextFromPages([
+    "Four-terminal transformer. Package terminals 1 2 3 4. Schematic: PRI 1, SEC 4."
+  ]);
+  const part = buildPartRecord(passiveDoc, "MAGNETIC.pdf");
+  const merged = mergeModelValues(
+    part,
+    passiveDoc,
+    {
+      values: {
+        pinCount: { value: 4, page: 1 },
+        pins: {
+          value: [
+            { number: 1, name: "PRI", electricalType: "passive" },
+            { number: 4, name: "SEC", electricalType: "passive" }
+          ] as never,
+          page: 1
+        }
+      }
+    },
+    "gemini"
+  );
+
+  assert.deepEqual(merged.part.pins.value?.map((pin) => [pin.number, pin.name]), [
+    ["1", "PRI"], ["2", "2"], ["3", "3"], ["4", "SEC"]
+  ]);
+  assert.match(merged.part.notes.join("\n"), /not labelled NC/);
+});
+
+test("a selected passive package identifies sparse drawing-only interconnect documents", () => {
+  const sparseDoc = datasheetTextFromPages(["1 2 3 4"]);
+  const part = buildPartRecord(sparseDoc, "drawing.pdf", undefined, { packageType: "transformer" });
+  const merged = mergeModelValues(
+    part,
+    sparseDoc,
+    {
+      values: {
+        pinCount: { value: 4, page: 1 },
+        pins: {
+          value: [
+            { number: 1, name: "PRI", electricalType: "passive" },
+            { number: 4, name: "SEC", electricalType: "passive" }
+          ] as never,
+          page: 1
+        }
+      }
+    },
+    "gemini",
+    [1]
+  );
+
+  assert.deepEqual(merged.part.pins.value?.map((pin) => [pin.number, pin.name]), [
+    ["1", "PRI"], ["2", "2"], ["3", "3"], ["4", "SEC"]
+  ]);
 });
 
 test("an exposed thermal pad is recorded on the part, and the pinout is KEPT", () => {
@@ -817,6 +891,8 @@ test("EVERY extraction field can actually be stored on the record", async () => 
     if (field === "dimensions.mounting") return "smd";
     if (field === "dimensions.solderMaskDefined") return "non-solder-mask-defined";
     if (field === "dimensions.leadsPerSide") return "4,4";
+    if (field === "dimensions.auxiliaryPads") return [];
+    if (field === "dimensions.terminalPads") return [];
     if (field.endsWith("Mm") || field === "pinCount" || field === "dimensions.leadCount") return 1.5;
     if (field === "dimensions.vacantLeadSlot") return 3;
     return "X";
@@ -1041,6 +1117,11 @@ test("a thermal pad the vendor NUMBERED is built as a pad, not as a lead", () =>
 
   assert.equal(merged.part.pins.value?.length, 8, "eight leads, as the package declares");
   assert.equal(merged.part.exposedPad, true, "and the ninth row is the pad");
+  assert.deepEqual(
+    merged.part.exposedPadPin,
+    { number: "9", name: "PowerPAD", electricalType: "unspecified" },
+    "its electrical identity survives for the schematic symbol"
+  );
   assert.ok(
     merged.part.notes.some((note) => /exposed thermal pad, not a lead/.test(note)),
     "the record says which row was reclassified and why"

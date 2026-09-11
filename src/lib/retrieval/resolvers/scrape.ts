@@ -25,6 +25,7 @@ import {
 } from "./http";
 import { buildPartVariants, normalizePartNumber } from "../partnumber";
 import { buildProductPageUrls } from "./manufacturer";
+import { officialManufacturer } from "./manufacturer-identity";
 import { logger } from "../logging";
 
 /**
@@ -77,6 +78,18 @@ function buildSearchQueries(partNumber: string, manufacturer?: string): string[]
 
   if (manufacturer) {
     queries.unshift(`${manufacturer} ${normalizedPart} datasheet pdf`, `${manufacturer} ${normalizedPart} pdf`);
+  }
+
+  // Ask the named manufacturer's own domain before accepting a distributor
+  // copy. Both may be authentic datasheets, but the official revision can
+  // contain package or terminal evidence omitted by an older mirror. Vendors
+  // that publish nothing still fall through to the existing general queries.
+  const official = officialManufacturer(manufacturer);
+  if (official) {
+    queries.unshift(
+      `site:${official.domain} ${normalizedPart} datasheet pdf`,
+      `site:${official.domain} ${normalizedPart} filetype:pdf`
+    );
   }
 
   if (isTexasInstruments(manufacturer)) {

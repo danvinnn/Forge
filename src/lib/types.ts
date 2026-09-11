@@ -139,7 +139,7 @@ export function pinTypeFrom(value: unknown): PinElectricalType {
 // are different provenance, and a QML reviewer auditing the record is entitled
 // to tell them apart. Collapsing them would lose the fact that a citation backs
 // the value.
-export const extractionMethods = ["deterministic", "vlm", "vlm-drawing", "user", "user-confirmed"] as const;
+export const extractionMethods = ["deterministic", "vlm", "vlm-drawing", "vendor", "user", "user-confirmed"] as const;
 
 export const textRegionSchema = z.object({
   x: z.number(),
@@ -170,6 +170,34 @@ export interface VendorLandEvidence {
   /** Kept so repeated pitch callouts are distinguishable from unrelated values. */
   dimensions?: Array<{ repeat: number | null; valueMm: number }>;
 }
+
+/** A board feature in the recommended footprint that is not an electrical terminal. */
+export const auxiliaryPadSchema = z.object({
+  kind: z.enum(["smd-pad", "plated-hole", "non-plated-hole"]),
+  xMm: z.number().finite().min(-200).max(200),
+  yMm: z.number().finite().min(-200).max(200),
+  widthMm: z.number().positive().max(200),
+  heightMm: z.number().positive().max(200),
+  shape: z.enum(["roundrect", "circle", "rect", "oval"]),
+  rotationDeg: z.number().finite().min(-360).max(360).optional(),
+  drillMm: z.number().positive().max(50).optional(),
+  hasPaste: z.boolean().optional()
+});
+
+export type AuxiliaryPadRecord = z.infer<typeof auxiliaryPadSchema>;
+
+/** A numbered electrical land read directly from a manufacturer's PCB layout. */
+export const terminalPadSchema = z.object({
+  number: z.string().min(1).max(32),
+  xMm: z.number().finite().min(-200).max(200),
+  yMm: z.number().finite().min(-200).max(200),
+  widthMm: z.number().positive().max(200),
+  heightMm: z.number().positive().max(200),
+  shape: z.enum(["roundrect", "circle", "rect", "oval"]),
+  rotationDeg: z.number().finite().min(-360).max(360).optional()
+});
+
+export type TerminalPadRecord = z.infer<typeof terminalPadSchema>;
 
 /**
  * Wraps every extracted value with its provenance. A value that could not be
@@ -294,6 +322,13 @@ export const packageDimensionsSchema = z.object({
     citation: null
   }),
   thermalPadWidthMm: extracted(z.number().positive()).default({
+    value: null,
+    confidence: null,
+    method: null,
+    citation: null
+  }),
+  /** Clockwise rotation of the exposed pad relative to the package axes. */
+  thermalPadRotationDeg: extracted(z.number().finite().min(-360).max(360)).default({
     value: null,
     confidence: null,
     method: null,
@@ -525,6 +560,26 @@ export const packageDimensionsSchema = z.object({
     citation: null
   }),
   /**
+   * Soldered hold-downs, shield tabs and mechanical holes shown by the
+   * recommended board layout, expanded to one entry per physical feature.
+   * An empty array means the drawing was inspected and has none; null means it
+   * was not established.  That distinction prevents a connector's numbered
+   * contacts from being shipped while silently omitting its mounting tabs.
+   */
+  auxiliaryPads: extracted(z.array(auxiliaryPadSchema).max(64)).default({
+    value: null,
+    confidence: null,
+    method: null,
+    citation: null
+  }),
+  /** Exact numbered copper from an irregular manufacturer-recommended layout. */
+  terminalPads: extracted(z.array(terminalPadSchema).max(512)).default({
+    value: null,
+    confidence: null,
+    method: null,
+    citation: null
+  }),
+  /**
    * How many SIDES of the package carry leads, counted off the drawing.
    *
    * 2 for a dual package, 4 for a quad. Read rather than looked up, because the
@@ -543,7 +598,7 @@ export const packageDimensionsSchema = z.object({
    * through to two rows and shipped a 3-lead regulator as two columns 5 mm
    * apart. Widening the type is what makes the honest answer sayable.
    */
-  leadSides: extracted(z.union([z.literal(1), z.literal(2), z.literal(4)])).default({
+  leadSides: extracted(z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)])).default({
     value: null,
     confidence: null,
     method: null,
@@ -719,6 +774,7 @@ export const partSchema = z.object({
          * Optional so a record written before this existed still validates.
          */
         exposedPad: z.boolean().optional(),
+        exposedPadPin: pinSchema.nullable().optional(),
         // The page this table was FOUND on, filled by the merge rather than
         // claimed by the model. Nullable, and a null one is what keeps an
         // unlocatable table out of a footprint.
@@ -770,6 +826,10 @@ export const partSchema = z.object({
             // numbering to prove. An entry WITH rows still proves it.
             if (!table.pins) return true;
             if (table.pins.length === 0) return false;
+            const grid = table.pins.every((pin) => /^[A-HJ-NP-Z]+\d+$/i.test(pin.number));
+            if (grid) {
+              return new Set(table.pins.map((pin) => pin.number.toUpperCase())).size === table.pins.length;
+            }
             const numbers = table.pins.map((pin) => Number(pin.number));
             if (numbers.some((value) => !Number.isInteger(value) || value < 1)) return false;
             return new Set(numbers).size === numbers.length && Math.max(...numbers) === numbers.length;
@@ -793,6 +853,8 @@ export const partSchema = z.object({
    * Defaulted, so a record stored before this field existed is still valid.
    */
   exposedPad: z.boolean().default(false),
+  /** Numbered exposed pad when the datasheet assigns it an electrical net. */
+  exposedPadPin: pinSchema.nullable().default(null),
   dimensions: packageDimensionsSchema,
   radiation: radiationDataSchema,
   sourceFileName: z.string().min(1),
@@ -834,6 +896,7 @@ export type PackageDimensions = {
   leadContactMm: Extracted<LeadWidth>;
   thermalPadLengthMm: Extracted<number>;
   thermalPadWidthMm: Extracted<number>;
+  thermalPadRotationDeg?: Extracted<number>;
   /**
    * The land pattern the datasheet PRINTS, read off its own recommended
    * footprint drawing. Where these are present they ARE the footprint: no
@@ -845,7 +908,7 @@ export type PackageDimensions = {
   landSpanMm: Extracted<number>;
   landSpanCrossMm: Extracted<number>;
   /** Sides of the package carrying leads: 2 for dual, 4 for quad. Read off the drawing. */
-  leadSides: Extracted<1 | 2 | 4>;
+  leadSides: Extracted<1 | 2 | 3 | 4>;
   /** How the leads leave the package. Decides which land-pattern model applies. */
   leadForm: Extracted<"gullwing" | "nolead" | "straight">;
   /** Lands on the surface, or leads through plated holes. Read off the drawing. */
@@ -866,6 +929,8 @@ export type PackageDimensions = {
   /** Thermal via drill diameter and grid pitch under an exposed pad, mm. */
   thermalViaDiameterMm: Extracted<number>;
   thermalViaPitchMm: Extracted<number>;
+  auxiliaryPads?: Extracted<AuxiliaryPadRecord[]>;
+  terminalPads?: Extracted<TerminalPadRecord[]>;
 };
 
 export type RadiationData = {
@@ -938,6 +1003,7 @@ export type PartRecord = {
     /** Absent on an entry that carries measurements and no pinout. */
     pins?: PinRecord[];
     exposedPad?: boolean;
+    exposedPadPin?: PinRecord | null;
     citation?: Citation | null;
     /**
      * THIS package's own measurements, each a full `Extracted<T>` carrying its
@@ -960,6 +1026,8 @@ export type PartRecord = {
   pins: Extracted<PinRecord[]>;
   /** True when a reader saw a non-numbered terminal. Blocks the footprint, not the pinout. */
   exposedPad: boolean;
+  /** Null for an unnamed/mechanical pad; present when it must exist in the schematic. */
+  exposedPadPin?: PinRecord | null;
   dimensions: PackageDimensions;
   radiation: RadiationData;
   sourceFileName: string;
@@ -1039,6 +1107,7 @@ export interface ResolvedPart {
     /** Absent on an entry that carries measurements and no pinout. */
     pins?: PinRecord[];
     exposedPad?: boolean;
+    exposedPadPin?: PinRecord | null;
     citation?: Citation | null;
     /**
      * THIS package's own measurements, each a full `Extracted<T>` carrying its
@@ -1055,6 +1124,7 @@ export interface ResolvedPart {
   drawnPackages?: string[];
   /** True when the part has an exposed thermal pad; `buildFootprintGeometry` refuses. */
   exposedPad: boolean;
+  exposedPadPin?: PinRecord | null;
   dimensions: {
     bodyLengthMm: number | null;
     bodyWidthMm: number | null;
@@ -1068,11 +1138,12 @@ export interface ResolvedPart {
     leadContactMm: LeadWidth | null;
     thermalPadLengthMm: number | null;
     thermalPadWidthMm: number | null;
+    thermalPadRotationDeg?: number | null;
     landPadLengthMm: number | null;
     landPadWidthMm: number | null;
     landSpanMm: number | null;
     landSpanCrossMm: number | null;
-    leadSides: 1 | 2 | 4 | null;
+    leadSides: 1 | 2 | 3 | 4 | null;
     leadForm: "gullwing" | "nolead" | "straight" | null;
     mounting: "smd" | "through-hole" | null;
     leadDiameterMm: number | null;
@@ -1084,6 +1155,8 @@ export interface ResolvedPart {
     solderMaskDefined: "solder-mask-defined" | "non-solder-mask-defined" | null;
     thermalViaDiameterMm: number | null;
     thermalViaPitchMm: number | null;
+    auxiliaryPads?: AuxiliaryPadRecord[] | null;
+    terminalPads?: TerminalPadRecord[] | null;
   };
   radiation: {
     tid: string | null;
@@ -1215,6 +1288,7 @@ export function resolveForExport(part: PartRecord, options: ResolveOptions = {})
       packagesInThisDocument: part.packagesInThisDocument,
       drawnPackages: part.drawnPackages,
       exposedPad: part.exposedPad,
+      exposedPadPin: part.exposedPadPin,
       dimensions: {
         bodyLengthMm: part.dimensions.bodyLengthMm.value,
         bodyWidthMm: part.dimensions.bodyWidthMm.value,
@@ -1228,6 +1302,7 @@ export function resolveForExport(part: PartRecord, options: ResolveOptions = {})
         leadContactMm: part.dimensions.leadContactMm.value,
         thermalPadLengthMm: part.dimensions.thermalPadLengthMm.value,
         thermalPadWidthMm: part.dimensions.thermalPadWidthMm.value,
+        thermalPadRotationDeg: part.dimensions.thermalPadRotationDeg?.value ?? null,
         landPadLengthMm: part.dimensions.landPadLengthMm.value,
         landPadWidthMm: part.dimensions.landPadWidthMm.value,
         landSpanMm: part.dimensions.landSpanMm.value,
@@ -1250,7 +1325,9 @@ export function resolveForExport(part: PartRecord, options: ResolveOptions = {})
         solderMaskExpansionMm: part.dimensions.solderMaskExpansionMm.value,
         solderMaskDefined: part.dimensions.solderMaskDefined.value,
         thermalViaDiameterMm: part.dimensions.thermalViaDiameterMm.value,
-        thermalViaPitchMm: part.dimensions.thermalViaPitchMm.value
+        thermalViaPitchMm: part.dimensions.thermalViaPitchMm.value,
+        auxiliaryPads: part.dimensions.auxiliaryPads?.value ?? null,
+        terminalPads: part.dimensions.terminalPads?.value ?? null
       },
       radiation: {
         tid: part.radiation.tid.value,

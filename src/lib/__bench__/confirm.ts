@@ -37,7 +37,6 @@ import { buildCachedParts, documentFor } from "./oracle-match";
 import { BENCH_SETTINGS, shipOutcome } from "./shipcheck";
 import { checkPinNames, entryDescribes, pinoutEntriesFor } from "./pinout-oracle";
 import { oracleFor, usesPrintedLand } from "./copper";
-import { isStitched } from "./replay";
 import { thermalPadNumber } from "../geometry";
 import { confirmations, MAX_FLAGGED, type Confirmation } from "../confirm";
 import { buildFootprintGeometry } from "../exporters";
@@ -82,8 +81,14 @@ const EPSILON_MM = 0.005;
  * nobody to check, which is the one outcome that would make the whole mechanism
  * worse than nothing.
  *
- * Null where there is no hand-read footprint, or where the record was stitched
- * from several prompt versions and is therefore evidence about no run at all.
+ * Null where there is no hand-read footprint.
+ *
+ * `buildCachedParts` rebuilds this record through `runExtraction` from answers
+ * keyed to the current request. Do not consult `replay.ts`'s global stitched
+ * flag here: that flag describes the separate generator replay, which merges
+ * every historical prompt version. Importing it made a coherent current-prompt
+ * LM358 record look stitched merely because old answers for the same label
+ * existed elsewhere on disk, excluding every copper oracle from this gate.
  *
  * Compared on the toe-to-toe span of the widest row, which is what
  * `bench:copper` compares and the dimension a misread decimal point distorts
@@ -95,7 +100,7 @@ function copperAgreesWithDrawing(
   geometry: FootprintGeometryLike
 ): "agrees" | "DISAGREES" | null {
   const oracle = oracleFor(part);
-  if (!oracle?.land || isStitched(part.partNumber)) return null;
+  if (!oracle?.land) return null;
   const padNumber = part.exposedPad ? thermalPadNumber(part.pinCount) : null;
   const lands = geometry.pads.filter((pad) => pad.number !== padNumber);
   if (lands.length < 2) return null;
@@ -342,10 +347,28 @@ async function main(): Promise<void> {
     for (const line of unshipped) console.log(`  ${line}`);
   }
 
+  // ZERO IS NOT A PASS. This bench depends on ignored real-document caches, so
+  // a prompt change can leave it with no current records even while thousands
+  // of stale responses remain on disk. Reporting zero false confirmations in
+  // that state is the precise vacuous-green failure this instrument exists to
+  // prevent. Require all three populations: shipping artifacts for the burden
+  // measurement, hand-read pinouts, and hand-read copper drawings.
+  const emptyMeasurements = [
+    rows.length === 0 ? "no shipping artifacts" : null,
+    judged.length === 0 ? "no hand-read pinouts" : null,
+    measured.length === 0 ? "no hand-read footprints" : null
+  ].filter((value): value is string => value !== null);
+  if (emptyMeasurements.length > 0) {
+    console.error(
+      `\nCONFIRMATION GATE INCOMPLETE: ${emptyMeasurements.join(", ")}. ` +
+        "Populate current-prompt readings for a cached oracle document; zero observations cannot establish a zero error rate."
+    );
+  }
+
   // Release invariants, not dashboard numbers. A false confirmation is a
   // wrong artefact Forge told the user they did not need to inspect. Review
   // volume is measured above but is not evidence of incorrectness.
-  if (silentWrong.length > 0 || silentWrongCopper.length > 0) {
+  if (emptyMeasurements.length > 0 || silentWrong.length > 0 || silentWrongCopper.length > 0) {
     process.exitCode = 1;
   }
 }

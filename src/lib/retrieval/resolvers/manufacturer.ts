@@ -221,7 +221,20 @@ const VENDORS: VendorPattern[] = [
     },
     urls(part) {
       const lower = part.toLowerCase();
-      return [`https://www.analog.com/media/en/technical-documentation/data-sheets/${lower}.pdf`];
+      const urls = [`https://www.analog.com/media/en/technical-documentation/data-sheets/${lower}.pdf`];
+      // Maxim frequently publishes adjacent numeric devices in one family PDF
+      // whose filename names both members, for example MAX40025A-MAX40026.
+      // The candidate remains safe: downloaded bytes must identify the exact
+      // requested part before any resolver can return them.
+      const maxim = /^MAX(\d+)$/i.exec(part);
+      if (maxim) {
+        const next = Number(maxim[1]) + 1;
+        urls.push(
+          `https://www.analog.com/media/en/technical-documentation/data-sheets/${lower}a-max${next}.pdf`,
+          `https://www.analog.com/media/en/technical-documentation/data-sheets/${lower}-max${next}.pdf`
+        );
+      }
+      return urls;
     }
     // No productUrls: analog.com answers its /en/products/ paths with 403 to us, verified
     // 2026-09-01 on ADR4525. The media path above is unaffected and keeps working.
@@ -287,7 +300,13 @@ const VENDORS: VendorPattern[] = [
     urls(part) {
       if (!/^ESP(32|8266)/i.test(part)) return [];
       const lower = part.toLowerCase();
-      return [`https://www.espressif.com/sites/default/files/documentation/${lower}_datasheet_en.pdf`];
+      const urls = [`https://www.espressif.com/sites/default/files/documentation/${lower}_datasheet_en.pdf`];
+      // Espressif publishes antenna and external-antenna module siblings in one
+      // document whose filename joins their complete names.
+      if (/wroom-\d+$/i.test(part)) urls.unshift(
+        `https://www.espressif.com/sites/default/files/documentation/${lower}_${lower}u_datasheet_en.pdf`
+      );
+      return urls;
     }
   },
   {

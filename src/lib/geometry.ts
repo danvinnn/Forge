@@ -91,7 +91,7 @@ export interface Pad {
    * pad this generator builds sits on the origin, so an off-centre pad would
    * have made one of them silently wrong.
    */
-  pasteApertures?: Array<{ centre: Point; widthMm: number; heightMm: number }>;
+  pasteApertures?: Array<{ centre: Point; widthMm: number; heightMm: number; rotationDeg?: number }>;
   /**
    * Solder mask clearance around this land, in millimetres, when the datasheet
    * states one.
@@ -290,7 +290,7 @@ export interface FootprintProvenance {
    * are owed the pitch and the span: it is a decision this generator made about
    * their package, and it is not otherwise stated anywhere in the output.
    */
-  arrangement: "single" | "dual" | "quad" | "grid";
+  arrangement: "single" | "dual" | "tri" | "quad" | "grid" | "explicit-numbered-lands";
   /**
    * THE SECOND, INDEPENDENT SOURCE FOR THIS COPPER, and what it said.
    *

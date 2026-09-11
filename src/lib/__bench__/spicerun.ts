@@ -190,16 +190,29 @@ export async function measurePart(
     // REFUSED, OR ONE QUESTION AWAY FROM BUILDING?
     //
     // `/api/model` offers exactly one value for a user to supply - a fixed
-    // regulator's nominal output, which a modern LDO datasheet states nowhere
-    // because the voltage is an ordering option. The bench has no user, so it
-    // answers with a placeholder purely to find out WHICH refusal this is.
+    // device's nominal output, which an LDO or fixed reference family
+    // datasheet may state only as an ordering option. The bench has no user, so
+    // it answers with a placeholder purely to find out WHICH refusal this is.
     //
     // The rebuilt model is thrown away. Its conformance checks would compare
     // the model against a number this file made up, and counting them would be
     // the bench marking its own homework.
-    const wouldBuildIfAsked =
-      (result.refusalBecause ?? "").includes("ldo:outputVoltage") &&
-      (await buildModel(bytes, part, undefined, undefined, { outputVoltage: PLACEHOLDER_OUTPUT_V })).subckt !== null;
+    let wouldBuildIfAsked = false;
+    if ((result.refusalBecause ?? "").split(/[:+]/).includes("outputVoltage")) {
+      // When the document lists fixed options, probe those actual choices. A
+      // deliberately odd placeholder is valid only when the document lists no
+      // options. Nothing from the rebuilt model is scored; this establishes
+      // only that at least one authoritative answer unlocks the path.
+      const candidates = result.outputVoltageOptions.length > 0
+        ? result.outputVoltageOptions
+        : [PLACEHOLDER_OUTPUT_V];
+      for (const outputVoltage of candidates) {
+        if ((await buildModel(bytes, part, undefined, undefined, { outputVoltage })).subckt !== null) {
+          wouldBuildIfAsked = true;
+          break;
+        }
+      }
+    }
     return {
       part,
       group,

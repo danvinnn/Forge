@@ -26,25 +26,19 @@ import { buildModel, type ModelCorrection } from "../../../lib/spice/build";
 import { spiceName } from "../../../lib/spice/emit";
 import { readWithModel } from "../../../lib/spice/read-model";
 import { tablePagesOf } from "../../../lib/spice/read-model";
-import { ALL_PARAMETERS, DEVICE_CLASSES, canonicalValue, supportedCorners, type DeviceClassId, type ModelParameter } from "../../../lib/spice/model";
+import { ALL_PARAMETERS, DEVICE_CLASSES, canonicalValue, type DeviceClassId, type ModelParameter } from "../../../lib/spice/model";
 import { pdfPageCount, renderPages } from "../../../lib/pagerender";
-import { verify, type Check } from "../../../lib/spice/verify";
-import { isOpenCollector, verifyComparator } from "../../../lib/spice/comparator";
-import { verifyReference } from "../../../lib/spice/reference";
-import { verifyLdo } from "../../../lib/spice/ldo";
-import { verifyInstrumentation } from "../../../lib/spice/instrumentation";
+import { isOpenCollector } from "../../../lib/spice/comparator";
 import { assessModelAssurance } from "../../../lib/spice/assurance";
 import {
-  compatibleVendorCandidates,
   inspectVendorModel,
   vendorResource,
   wrapVendorCandidate,
-  wrapVendorModel,
   type VendorCandidate
 } from "../../../lib/spice/vendor";
 import { GENERATED_OPPORTUNITY, VENDOR_OPPORTUNITY, unresolvedOpportunity } from "../../../lib/spice/opportunity";
 import { extractPartRecord } from "../../../lib/datasheet";
-import { looksLikeWrongDocument, namesThePart } from "../../../lib/pdftext";
+import { looksLikeWrongDocument, namesThePart, type DatasheetText } from "../../../lib/pdftext";
 import {
   getDeploymentMode,
   makeResolver,
@@ -318,6 +312,7 @@ async function vendorOnlyResponse(options: {
       declaration: `${candidate.kind === "subckt" ? ".SUBCKT" : `.MODEL ${candidate.modelType}`} ${candidate.name}`,
       terminals: candidate.terminals
     },
+    vendorCandidates: [],
     checks: [],
     toCheck: [
       {
@@ -341,6 +336,68 @@ async function vendorOnlyResponse(options: {
     modelOpportunity: VENDOR_OPPORTUNITY,
     mode: getDeploymentMode()
   });
+}
+
+async function vendorFileResponse(options: {
+  partNumber: string;
+  manufacturer: string | null;
+  vendorModel: File;
+  vendorCandidateId?: string;
+  vendorInstanceValue?: string;
+  cadBundle: File | null;
+  json: boolean;
+}) {
+  const { partNumber, manufacturer, vendorModel, vendorCandidateId, vendorInstanceValue, cadBundle, json } = options;
+  let candidates: VendorCandidate[];
+  try {
+    candidates = inspectVendorModel(await vendorModel.text());
+  } catch (error) {
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "The vendor model could not be inspected safely.",
+      code: "VENDOR_MODEL_REFUSED",
+      mode: getDeploymentMode(),
+      modelOpportunity: { disposition: "vendor-file-unusable", resolved: false }
+    }, { status: 422 });
+  }
+  if (candidates.length === 0) {
+    return NextResponse.json({
+      error: "No standalone .SUBCKT or supported primitive .MODEL declaration was found in this vendor file.",
+      code: "VENDOR_MODEL_REFUSED",
+      mode: getDeploymentMode(),
+      modelOpportunity: { disposition: "vendor-file-unusable", resolved: false }
+    }, { status: 422 });
+  }
+  const selected = vendorCandidateId
+    ? candidates.find((candidate) => candidate.id === vendorCandidateId)
+    : candidates.length === 1 ? candidates[0] : undefined;
+  if (!selected) {
+    return NextResponse.json({
+      error: "This vendor file contains more than one usable declaration. Choose the part-level model; Forge will not guess among helper subcircuits.",
+      code: "VENDOR_SELECTION_REQUIRED",
+      mode: getDeploymentMode(),
+      vendorCandidates: candidates,
+      vendorResource: vendorResource(partNumber, manufacturer),
+      modelOpportunity: { disposition: "user-selection-required", resolved: false }
+    }, { status: 422 });
+  }
+  if (selected.instanceParameter && !vendorInstanceValue) {
+    return NextResponse.json({
+      error: `This .MODEL card needs its instance ${selected.instanceParameter}. Supply the value printed for this part; Forge will not invent it.`,
+      code: "VENDOR_CONFIGURATION_REQUIRED",
+      mode: getDeploymentMode(),
+      vendorCandidates: candidates.length > 1 ? candidates : [],
+      vendorConfiguration: { parameter: selected.instanceParameter },
+      vendorUploadAccepted: true,
+      vendorResource: vendorResource(partNumber, manufacturer),
+      modelOpportunity: { disposition: "configuration-required", resolved: false }
+    }, { status: 422 });
+  }
+  try {
+    return await vendorOnlyResponse({ partNumber, manufacturer, vendorModel, candidate: selected,
+      instanceValue: vendorInstanceValue, cadBundle, json });
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "The vendor-model configuration is invalid.", "INPUT_INVALID", 400);
+  }
 }
 
 export async function POST(request: Request) {
@@ -378,6 +435,38 @@ export async function POST(request: Request) {
     return fail("The manufacturer name is too long.", "INPUT_INVALID", 400);
   }
 
+  const cadBundle = formData.get("cadBundle");
+  if (cadBundle !== null && !(cadBundle instanceof File)) return fail("The CAD bundle is invalid.", "UPLOAD_INVALID", 400);
+  if (cadBundle instanceof File && cadBundle.size > MAX_CAD_BUNDLE_BYTES) {
+    return fail("The CAD bundle is larger than the 20MB limit.", "UPLOAD_INVALID", 413);
+  }
+  const vendorModel = formData.get("vendorModel");
+  if (vendorModel !== null && !(vendorModel instanceof File)) return fail("The vendor model is invalid.", "UPLOAD_INVALID", 400);
+  if (vendorModel instanceof File && vendorModel.size > MAX_VENDOR_MODEL_BYTES) {
+    return fail("The vendor model is larger than the 5MB limit.", "UPLOAD_INVALID", 413);
+  }
+  const vendorCandidateField = formData.get("vendorCandidate");
+  const vendorCandidateId = typeof vendorCandidateField === "string" ? vendorCandidateField : undefined;
+  const vendorInstanceValueField = formData.get("vendorInstanceValue");
+  const vendorInstanceValue = typeof vendorInstanceValueField === "string" ? vendorInstanceValueField.trim() : undefined;
+  if (vendorInstanceValue !== undefined && vendorInstanceValue.length > 32) {
+    return fail("The vendor instance value is too long.", "INPUT_INVALID", 400);
+  }
+
+  // A standalone vendor declaration is already a complete construction path.
+  // It needs no datasheet retrieval and no behavioural interpretation.
+  if (vendorModel instanceof File) {
+    return vendorFileResponse({
+      partNumber,
+      manufacturer,
+      vendorModel,
+      vendorCandidateId,
+      vendorInstanceValue,
+      cadBundle: cadBundle instanceof File ? cadBundle : null,
+      json: formData.get("response") === "json"
+    });
+  }
+
   // A part-number workflow has no browser-side PDF to upload. Resolve the same
   // public datasheet here, validate that it really names the requested part,
   // and then feed the exact same byte-oriented builder used by uploads. This
@@ -385,6 +474,7 @@ export async function POST(request: Request) {
   // combined CAD+SPICE instead of failing behind a button that promises it.
   const uploaded = formData.get("file");
   let file: File;
+  let retrievedIdentityText: DatasheetText | undefined;
   if (uploaded instanceof File) {
     file = uploaded;
   } else if (uploaded !== null) {
@@ -418,28 +508,10 @@ export async function POST(request: Request) {
       return fail(`The retrieved document could not be verified as the datasheet for ${partNumber}. Upload the correct PDF directly.`, "WRONG_DOCUMENT", 422);
     }
     manufacturer ||= identified.part.manufacturer.value?.slice(0, 100) ?? null;
+    retrievedIdentityText = identified.doc;
     file = new File([ref.bytes], ref.fileName, { type: "application/pdf" });
   }
   if (file.size > MAX_PDF_BYTES) return fail("File is larger than the 50MB limit.", "UPLOAD_INVALID", 413);
-
-  const cadBundle = formData.get("cadBundle");
-  if (cadBundle !== null && !(cadBundle instanceof File)) return fail("The CAD bundle is invalid.", "UPLOAD_INVALID", 400);
-  if (cadBundle instanceof File && cadBundle.size > MAX_CAD_BUNDLE_BYTES) {
-    return fail("The CAD bundle is larger than the 20MB limit.", "UPLOAD_INVALID", 413);
-  }
-  const vendorModel = formData.get("vendorModel");
-  if (vendorModel !== null && !(vendorModel instanceof File)) return fail("The vendor model is invalid.", "UPLOAD_INVALID", 400);
-  if (vendorModel instanceof File && vendorModel.size > MAX_VENDOR_MODEL_BYTES) {
-    return fail("The vendor model is larger than the 5MB limit.", "UPLOAD_INVALID", 413);
-  }
-
-  const vendorCandidateField = formData.get("vendorCandidate");
-  const vendorCandidateId = typeof vendorCandidateField === "string" ? vendorCandidateField : undefined;
-  const vendorInstanceValueField = formData.get("vendorInstanceValue");
-  const vendorInstanceValue = typeof vendorInstanceValueField === "string" ? vendorInstanceValueField.trim() : undefined;
-  if (vendorInstanceValue !== undefined && vendorInstanceValue.length > 32) {
-    return fail("The vendor instance value is too long.", "INPUT_INVALID", 400);
-  }
 
   // Which specification block the user is holding, where they have said. A
   // datasheet printing one block per supply, or several grades side by side,
@@ -495,87 +567,18 @@ export async function POST(request: Request) {
       return fail("A correction cites a page that is not in this PDF.", "INPUT_INVALID", 400);
     }
   }
+
   const built = await buildModel(
     pdfBytes,
     partNumber,
     choose,
     (pages) => secondReadingWithin(pdfBytes, pages),
     suppliedFrom(formData),
-    corrections
+    corrections,
+    retrievedIdentityText
   );
 
   if (!built.subckt || !built.block) {
-    if (vendorModel instanceof File) {
-      let candidates: VendorCandidate[];
-      try {
-        candidates = inspectVendorModel(await vendorModel.text());
-      } catch (error) {
-        return NextResponse.json(
-          {
-            error: error instanceof Error ? error.message : "The vendor model could not be inspected safely.",
-            code: "VENDOR_MODEL_REFUSED",
-            mode: getDeploymentMode(),
-            modelOpportunity: { disposition: "vendor-file-unusable", resolved: false }
-          },
-          { status: 422 }
-        );
-      }
-      if (candidates.length === 0) {
-        return NextResponse.json(
-          {
-            error: "No standalone .SUBCKT or supported primitive .MODEL declaration was found in this vendor file.",
-            code: "VENDOR_MODEL_REFUSED",
-            mode: getDeploymentMode(),
-            modelOpportunity: { disposition: "vendor-file-unusable", resolved: false }
-          },
-          { status: 422 }
-        );
-      }
-      const selected = vendorCandidateId
-        ? candidates.find((candidate) => candidate.id === vendorCandidateId)
-        : candidates.length === 1 ? candidates[0] : undefined;
-      if (!selected) {
-        return NextResponse.json(
-          {
-            error: "This vendor file contains more than one usable declaration. Choose the part-level model; Forge will not guess among helper subcircuits.",
-            code: "VENDOR_SELECTION_REQUIRED",
-            mode: getDeploymentMode(),
-            vendorCandidates: candidates,
-            vendorResource: vendorResource(partNumber, manufacturer),
-            modelOpportunity: { disposition: "user-selection-required", resolved: false }
-          },
-          { status: 422 }
-        );
-      }
-      if (selected.instanceParameter && !vendorInstanceValue) {
-        return NextResponse.json(
-          {
-            error: `This .MODEL card needs its instance ${selected.instanceParameter}. Supply the value printed for this part; Forge will not invent it.`,
-            code: "VENDOR_CONFIGURATION_REQUIRED",
-            mode: getDeploymentMode(),
-            vendorCandidates: candidates.length > 1 ? candidates : [],
-            vendorConfiguration: { parameter: selected.instanceParameter },
-            vendorUploadAccepted: true,
-            vendorResource: vendorResource(partNumber, manufacturer),
-            modelOpportunity: { disposition: "configuration-required", resolved: false }
-          },
-          { status: 422 }
-        );
-      }
-      try {
-        return await vendorOnlyResponse({
-          partNumber,
-          manufacturer,
-          vendorModel,
-          candidate: selected,
-          instanceValue: vendorInstanceValue,
-          cadBundle: cadBundle instanceof File ? cadBundle : null,
-          json: formData.get("response") === "json"
-        });
-      } catch (error) {
-        return fail(error instanceof Error ? error.message : "The vendor-model configuration is invalid.", "INPUT_INVALID", 400);
-      }
-    }
     const reasonParts = (built.refusalBecause ?? "").split(/[:+]/);
     const reviewable = reasonParts
       .slice(1)
@@ -693,43 +696,8 @@ export async function POST(request: Request) {
       { status: 422 }
     );
   }
-  let vendorVerification: {
-    status: "not-supplied" | "checked" | "refused";
-    error: string | null;
-    checks: Check[];
-    simulatorMissing: boolean;
-  } = { status: "not-supplied", error: null, checks: [], simulatorMissing: false };
-  let vendorCandidates: VendorCandidate[] = [];
-  if (vendorModel instanceof File) {
-    try {
-      const vendorText = await vendorModel.text();
-      const compatible = compatibleVendorCandidates(vendorText, built.deviceClass!.id);
-      if (compatible.length > 1 && !vendorCandidateId) {
-        vendorCandidates = compatible;
-        throw new Error("More than one subcircuit has the required terminal contract. Choose the part-level declaration; Forge will not guess among helpers.");
-      }
-      const wrapped = wrapVendorModel(vendorText, built.deviceClass!.id, "FORGE_VENDOR", vendorCandidateId);
-      const modelCorners = supportedCorners(built.block, built.deviceClass!);
-      const typical = modelCorners.includes("typ") ? ["typ" as const] : [modelCorners[0]].filter(Boolean) as Array<"typ" | "min" | "max">;
-      const checked = built.deviceClass!.id === "opamp"
-        ? await verify(wrapped.text, built.block, "FORGE_VENDOR", typical)
-        : built.deviceClass!.id === "comparator"
-          ? await verifyComparator(wrapped.text, built.block, "FORGE_VENDOR", typical)
-          : built.deviceClass!.id === "reference"
-            ? await verifyReference(wrapped.text, built.block, "FORGE_VENDOR", typical)
-            : built.deviceClass!.id === "ldo"
-              ? await verifyLdo(wrapped.text, built.block, "FORGE_VENDOR", typical)
-              : await verifyInstrumentation(wrapped.text, built.block, "FORGE_VENDOR", typical);
-      vendorVerification = { status: "checked", error: null, checks: checked.checks, simulatorMissing: checked.simulatorMissing };
-    } catch (error) {
-      vendorVerification = {
-        status: "refused",
-        error: error instanceof Error ? error.message : "The vendor model could not be verified.",
-        checks: [],
-        simulatorMissing: false
-      };
-    }
-  }
+  const vendorVerification = { status: "not-supplied" as const, error: null, checks: [], simulatorMissing: false };
+  const vendorCandidates: VendorCandidate[] = [];
   const deviceLabel = built.deviceClass?.label ?? "model";
   const deviceArticle = /^[aeiou]/i.test(deviceLabel) ? "an" : "a";
   const receipt = [
@@ -825,19 +793,6 @@ export async function POST(request: Request) {
   zip.file(`${spiceFolder}${name}.lib`, built.subckt);
   zip.file(`${spiceFolder}${name}.asy`, built.asy!);
   zip.file(`${spiceFolder}${name}-conformance.txt`, receipt);
-  if (vendorModel instanceof File) {
-    zip.file(
-      `${spiceFolder}${name}-vendor-conformance.txt`,
-      [
-        `${partNumber} vendor-model conformance report`,
-        "",
-        "The vendor file was supplied by you and is NOT redistributed in this archive.",
-        vendorVerification.status === "refused" ? `REFUSED: ${vendorVerification.error}` : "",
-        vendorVerification.simulatorMissing ? "UNVERIFIABLE: ngspice is not available on this host." : "",
-        ...vendorVerification.checks.map((check) => `${check.verdict.padEnd(14)} ${check.parameter} ${check.corner} expected=${check.expected} measured=${check.measured ?? "-"}`)
-      ].filter(Boolean).join("\n")
-    );
-  }
   if (cadBundle instanceof File) {
     let cadZip: JSZip;
     try {

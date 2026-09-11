@@ -829,6 +829,7 @@ export function emitAltiumPcbLib(geometry: FootprintGeometry, extras: AltiumFoot
             centre: aperture.centre,
             widthMm: aperture.widthMm,
             heightMm: aperture.heightMm,
+            ...(aperture.rotationDeg === undefined ? {} : { rotationDeg: aperture.rotationDeg }),
             shape: "roundrect",
             mounting: "smd"
           },

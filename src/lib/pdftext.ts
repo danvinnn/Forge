@@ -593,6 +593,35 @@ export function namesThePart(doc: DatasheetText, partNumber: string, pages = 2):
   return false;
 }
 
+/** Stronger candidate-level identity: the requested product must be presented
+ * in the first page's title/intro, not merely mentioned somewhere in two pages.
+ * Family stems remain valid when printed as standalone front-matter tokens. */
+export function namesThePartAsSubject(doc: DatasheetText, partNumber: string): boolean {
+  const trimmed = partNumber.trim();
+  if (trimmed.length < 3) return true;
+  const front = (doc.pages[0]?.text ?? "").slice(0, 2500).toUpperCase();
+  const key = trimmed.toUpperCase();
+  const alnum = (value: string) => value.replace(/[^A-Z0-9]/g, "");
+  if (alnum(front).includes(alnum(key))) return true;
+  // Many family datasheets replace the package/order-code suffix with `x` in
+  // their title: STM32H573II is headed STM32H573xx. Treat terminal x's as
+  // wildcards only when the complete token length matches and the fixed prefix
+  // is substantial. This accepts the manufacturer's family statement without
+  // reviving prefix-only matches such as TPS7A20 for TPS7A4700.
+  const requested = alnum(key);
+  for (const token of front.matchAll(/(?:^|[^A-Z0-9])([A-Z0-9]*X{1,4})(?![A-Z0-9])/g)) {
+    const family = token[1];
+    const fixed = family.replace(/X+$/, "");
+    if (fixed.length >= 5 && family.length === requested.length && requested.startsWith(fixed)) return true;
+  }
+  for (let length = key.length - 1; length >= 3; length -= 1) {
+    const stem = alnum(key.slice(0, length));
+    if (stem.length < 3) break;
+    if (new RegExp(`(?:^|[^A-Z0-9])${stem}(?![A-Z0-9])`).test(front)) return true;
+  }
+  return false;
+}
+
 export function datasheetTextFromPages(pageTexts: string[]): DatasheetText {
   const pages: PageText[] = [];
   let combined = "";
@@ -613,6 +642,4 @@ export function datasheetTextFromPages(pageTexts: string[]): DatasheetText {
 
   return { text: combined, pages, pageCount: pages.length, truncated: false };
 }
-
-
 

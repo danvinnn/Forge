@@ -1174,13 +1174,25 @@ async function waitForServer(timeoutMs: number): Promise<boolean> {
         const said = await page.locator(".frame-status").first().innerText().catch(() => "");
         note(`  export bodies carried: ${sent.join(" | ")}`);
         page.off("request", watchExport);
-        // The ANSWERS REACHED THE ROUTE - the bodies above say so - and it asked
-        // again. On a required part that is a defect; on the question part it is
-        // this bench's numbers not making a footprint, which is the route being
-        // right. Reported either way so the distinction stays visible.
+        // REJECTION IS PROGRESS when the value is wrong. This browser pass uses
+        // merely plausible numbers, not a manufacturer oracle. RHF1201 proved
+        // why repetition alone cannot diagnose a dropped answer: the request
+        // carried 10.16 mm as a land on 0.635 mm pitch, and the route correctly
+        // rejected it and left the same boxes available for correction.
+        //
+        // Accept repetition only when the screen names a physical validation
+        // failure. An unexplained repeat is still the lost-answer loop this
+        // instrument was built to catch, including on the optional question
+        // document.
+        const correctionRequested =
+          /rejected|misread|would (?:touch|overlap|end|sit)|outside|invalid|needs its own/i.test(said);
+        if (correctionRequested) {
+          reached.add("suite-question-answered");
+          note(`  synthetic answer was safely rejected and the same fields remain available for correction: ${JSON.stringify(said.slice(0, 120))}`);
+          return;
+        }
         const message = `${part}: every one of ${asking.join(", ")} was answered and all of them were asked again unchanged. Screen says: ${JSON.stringify(said.slice(0, 120))}`;
-        if (options.required) problems.push(`[suite-cad] ${message}`);
-        else note(`  (not a failure on an optional part) ${message}`);
+        problems.push(`[suite-cad] ${message}`);
         return;
       }
       previous = asking.join(",");
@@ -1387,15 +1399,25 @@ async function main() {
       problems.push(`[blocked] ${request.url()} :: ${request.failure()?.errorText}`);
     });
     page.on("response", (response) => {
-      // A 422 FROM `/api/export` IS A DESIGNED ANSWER, not a fault. It is how
-      // the route says "these values are missing and you can supply them", and
-      // the screen turns it into the question flow. Counting it as a browser
-      // problem reports the product's honesty as a defect. Any OTHER 4xx or 5xx
-      // is still a finding, and an export that refuses for a reason the screen
-      // does not handle is caught below by its outcome rather than its status.
+      // A 422 FROM `/api/export` OR `/api/model` IS A DESIGNED ANSWER, not a
+      // fault. It is how those routes say "this is missing and you can supply
+      // it", and the screen turns it into the question flow.
+      //
+      // `/api/resources` uses the same status for a different designed miss:
+      // one manufacturer candidate downloaded, but was not a supported archive
+      // or contained no usable artifact. Automatic recovery catches that miss
+      // and tries the next ranked URL; interactive recovery shows its message.
+      // Counting the response itself as an application crash made this gate
+      // depend on the transient contents of a live vendor URL. The recovery
+      // wiring and successful import are exercised independently in the
+      // deterministic no-spend pass. Every other 4xx/5xx remains a finding.
       const designedRefusal =
         response.status() === 422 &&
-        (response.url().endsWith("/api/export") || response.url().endsWith("/api/model"));
+        (
+          response.url().endsWith("/api/export") ||
+          response.url().endsWith("/api/model") ||
+          response.url().endsWith("/api/resources")
+        );
       // AND THE ONE THIS BENCH CAUSES ON PURPOSE. Stage 5 posts a file that is
       // not a PDF, because that is the only way to press Read and learn whether
       // blank settings block it without spending a model call. The route

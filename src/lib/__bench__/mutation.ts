@@ -137,8 +137,11 @@ const MUTATIONS: Mutation[] = [
     id: "M11",
     breaks: "the right-hand row is numbered the wrong way, so every pin on it is miswired",
     file: EXPORTERS,
-    from: 'right.forEach((number, index) => push(number, land.padCentreMm, step(index), "x"));',
-    to: 'right.forEach((number, index) => push(number, land.padCentreMm, -step(index), "x"));'
+    // The three-pin branch centres the single pad on the right. Preserve that
+    // legitimate exception and reverse every ordinary right-hand row, which is
+    // the defect this mutation is meant to exercise.
+    from: 'right.forEach((number, index) => push(number, land.padCentreMm, part.pinCount === 3 ? 0 : step(index), "x"));',
+    to: 'right.forEach((number, index) => push(number, land.padCentreMm, part.pinCount === 3 ? 0 : -step(index), "x"));'
   },
   {
     id: "M12",
@@ -422,6 +425,10 @@ function main(): void {
     console.log("\nThese mutations no longer match the source and need rewriting:");
     for (const mutation of notApplied) console.log(`  ${mutation.id}  ${mutation.file}`);
   }
+  // A mutation that survives is an uncovered product defect. A mutation that
+  // cannot be applied is an uncovered TEST defect. Either makes this gate
+  // incomplete, so neither may return success and let bench:release continue.
+  if (survived.length > 0 || notApplied.length > 0) process.exitCode = 1;
 }
 
 main();

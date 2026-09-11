@@ -26,6 +26,8 @@ import { confirmParameters, type ModelReadValue, type SpiceConfirmationReport } 
 import { applyModelIdentities, type Naming } from "./identify";
 import { tablePagesOf } from "./read-model";
 import type { SpecRow } from "./specs";
+import { extractDatasheetText, type DatasheetText } from "../pdftext";
+import { identifyDocumentDevice, statedOutputVoltageOptions } from "./device-identity";
 
 export interface BuildResult {
   /** Every specification row read, including ones no model consumes. */
@@ -78,6 +80,9 @@ export interface BuildResult {
    * gain-bandwidth is evidence.
    */
   deviceClass: DeviceClass | null;
+  /** Fixed output options stated by the document, for a caller presenting the
+   * one safe configuration question. Empty means the document stated none. */
+  outputVoltageOptions: number[];
 }
 
 /** Two passes is what OPA333 needed; a third catches anything slower. */
@@ -135,7 +140,8 @@ function nameMissing(block: ModelBlock | undefined, parameter: ModelParameter): 
  */
 function withSupplied(
   blocks: ModelBlock[],
-  supplied: Partial<Record<ModelParameter, number>> | undefined
+  supplied: Partial<Record<ModelParameter, number>> | undefined,
+  replaceOutputVoltage = false
 ): ModelBlock[] {
   if (!supplied) return blocks;
   const entries = Object.entries(supplied) as Array<[ModelParameter, number]>;
@@ -143,7 +149,7 @@ function withSupplied(
   return blocks.map((block) => {
     const values = { ...block.values };
     for (const [parameter, value] of entries) {
-      if (!Number.isFinite(value) || values[parameter]) continue;
+      if (!Number.isFinite(value) || (values[parameter] && !(replaceOutputVoltage && parameter === "outputVoltage"))) continue;
       values[parameter] = {
         // Every corner, because a supplied nominal is a single number and a
         // block expressing three corners would otherwise find it unusable.
@@ -286,9 +292,18 @@ export async function buildModel(
    * cited to a page, because nobody read it off one.
    */
   supplied?: Partial<Record<ModelParameter, number>>,
-  corrections?: ModelCorrection[]
+  corrections?: ModelCorrection[],
+  /** Already-validated text from automatic retrieval; avoids parsing the same
+   * bytes twice and losing front-matter identity on only the second parse. */
+  identityTextOverride?: DatasheetText
 ): Promise<BuildResult> {
-  const [tableRows, gainEquation] = await Promise.all([readSpecRows(pdfBytes), readGainEquation(pdfBytes)]);
+  const [tableRows, gainEquation, identityText] = await Promise.all([
+    readSpecRows(pdfBytes),
+    readGainEquation(pdfBytes, partNumber),
+    identityTextOverride
+      ? Promise.resolve(identityTextOverride)
+      : extractDatasheetText(pdfBytes, { maxPages: 4 }).catch(() => null)
+  ]);
   const read: SpecRow[] = gainEquation
     ? [...tableRows, {
         parameter: gainEquation.equation,
@@ -346,7 +361,19 @@ export async function buildModel(
     ...recovered.map((row) => ({ parameter: row.parameter, key: row.key!, page: row.page }))
   ];
   const { conflicts, blocked } = identified;
-  const blocks = withCorrections(withSupplied(readBlocks(rows), supplied), corrections);
+  const rawBlocks = readBlocks(rows);
+  const outputOptions = identityText ? statedOutputVoltageOptions(identityText.pages.map((page) => page.text)) : [];
+  const foldedPart = partNumber.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const variantOutputRow = rows.some((row) => {
+    if (row.key !== "outputVoltage") return false;
+    const qualifier = row.parameter.replace(/(?:OUTPUT|REFERENCE)\s*(?:OUTPUT\s*)?VOLTAGE/gi, "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    return qualifier.length > foldedPart.length && qualifier.includes(foldedPart);
+  });
+  const familyOutputAmbiguous = namedBlock(rawBlocks, partNumber) === null && (outputOptions.length > 1 || variantOutputRow);
+  const selectedOutputVoltage = supplied?.outputVoltage !== undefined && (
+    outputOptions.length === 0 || outputOptions.some((option) => Math.abs(option - supplied.outputVoltage!) < 1e-9)
+  );
+  const blocks = withCorrections(withSupplied(rawBlocks, supplied, familyOutputAmbiguous && selectedOutputVoltage), corrections);
 
   // WHICH KIND OF PART, from what the document states.
   //
@@ -357,19 +384,45 @@ export async function buildModel(
   // preference and nothing here looks at the part number.
   let deviceClass: DeviceClass | null = null;
   let ready: ModelBlock[] = [];
+  const documentIdentity = identityText
+    ? identifyDocumentDevice(identityText.pages.map((page) => page.text))
+    : { supported: null, unsupported: null, ambiguous: false };
   const candidateClasses = choose?.deviceClass
     ? DEVICE_CLASSES.filter((candidate) => candidate.id === choose.deviceClass)
-    : DEVICE_CLASSES;
+    : documentIdentity.supported
+      ? DEVICE_CLASSES.filter((candidate) => candidate.id === documentIdentity.supported)
+      : documentIdentity.unsupported || documentIdentity.ambiguous
+        ? []
+        : DEVICE_CLASSES;
   for (const candidate of candidateClasses) {
     const fits = buildable(blocks, candidate);
     if (fits.length > 0) {
       deviceClass = candidate;
-      ready = fits;
+      // A second visual reading may recover values, but its free-form scope is
+      // not by itself an independent reason to invent a new selectable grade.
+      // When at least one buildable block is anchored by deterministic table
+      // geometry, only those anchored blocks may become user-facing choices.
+      // Recovery-only blocks remain usable when deterministic extraction found
+      // no block at all, preserving the page-review escape hatch.
+      const anchored = fits.filter((block) => read.some((row) =>
+        row.key && (row.scope ?? null) === block.scope && (row.group ?? null) === block.group
+      ));
+      ready = anchored.length > 0 ? anchored : fits;
       break;
     }
   }
 
-  const base: BuildResult = { rows, blocks, block: null, alternatives: [], blockChosenBy: "only-one", subckt: null, asy: null, report: null, trim: NO_TRIM, confirmations: null, refusal: null, refusalBecause: null, named, blockedNames: blocked, deviceClass: null };
+  const base: BuildResult = { rows, blocks, block: null, alternatives: [], blockChosenBy: "only-one", subckt: null, asy: null, report: null, trim: NO_TRIM, confirmations: null, refusal: null, refusalBecause: null, named, blockedNames: blocked, deviceClass: null, outputVoltageOptions: outputOptions };
+
+  if (!choose?.deviceClass && (documentIdentity.unsupported || documentIdentity.ambiguous)) {
+    return {
+      ...base,
+      refusalBecause: "unsupported-device-class",
+      refusal: documentIdentity.unsupported
+        ? `This document identifies the part as a ${documentIdentity.unsupported}, for which Forge has no generated behavioural-model contract. A standalone vendor model can still be adapted without inferring its behaviour.`
+        : "The document's front matter names more than one supported device kind, so Forge cannot choose a behavioural topology without a reviewed device-kind selection."
+    };
+  }
 
   if (ready.length === 0 || deviceClass === null) {
     // THE REFUSAL NAMES WHAT EVERY CLASS WOULD HAVE NEEDED.
@@ -379,7 +432,12 @@ export async function buildModel(
     // gain-bandwidth, which is true and useless: their part has none, and the
     // sentence pointed them at a page that will never carry one.
     const first = blocks[0];
-    const perClass = DEVICE_CLASSES.map((candidate) => {
+    const diagnosticClasses = choose?.deviceClass
+      ? DEVICE_CLASSES.filter((candidate) => candidate.id === choose.deviceClass)
+      : documentIdentity.supported
+        ? DEVICE_CLASSES.filter((candidate) => candidate.id === documentIdentity.supported)
+        : DEVICE_CLASSES;
+    const perClass = diagnosticClasses.map((candidate) => {
       // A class ruled OUT by what the document states is a different sentence
       // from one short of something, and saying the wrong one sends the reader
       // looking for a row that is on the page.
@@ -397,7 +455,7 @@ export async function buildModel(
     // neither a gain nor a gain-bandwidth and is not remotely a comparator, was
     // filed under the comparator class. A slug that groups a bench's findings
     // has to group them by something true.
-    const evidence = DEVICE_CLASSES.map((candidate) => {
+    const evidence = diagnosticClasses.map((candidate) => {
       const missing = first?.missingFor[candidate.id] ?? [...candidate.required];
       const ruledOut = first ? disqualifies(first, candidate) !== null : false;
       return {
@@ -444,15 +502,41 @@ export async function buildModel(
   // between a 5 V part and a 24 V one - with every value read correctly, every
   // check passing, and nothing downstream able to tell.
   const captioned = namedBlock(ready, partNumber);
+  const hasBlockChoice = choose?.blockIndex !== undefined || choose?.scope !== undefined || choose?.group !== undefined;
   const requested = choose?.blockIndex !== undefined
     ? ready[choose.blockIndex]
-    : choose
-      ? ready.find((b) => (choose.scope === undefined || b.scope === choose.scope) && (choose.group === undefined || b.group === choose.group))
+    : hasBlockChoice
+      ? ready.find((b) => (choose!.scope === undefined || b.scope === choose!.scope) && (choose!.group === undefined || b.group === choose!.group))
       : undefined;
   const chosen = requested ?? captioned ?? ready[0];
   const blockChosenBy: BuildResult["blockChosenBy"] =
     ready.length === 1 ? "only-one" : requested ? "the-caller-asked" : chosen === captioned ? "caption-names-the-part" : "first-of-several";
   const alternatives = ready.filter((b) => b !== chosen);
+
+  // A bare family number can name several fixed output products.  One table's
+  // first voltage is not evidence that this is the variant the user holds.
+  // Stop before emission unless the caller selected a table/value explicitly.
+  if (
+    (deviceClass.id === "reference" || deviceClass.id === "ldo") &&
+    familyOutputAmbiguous &&
+    !selectedOutputVoltage &&
+    !requested &&
+    !captioned
+  ) {
+    return {
+      ...base,
+      deviceClass,
+      block: chosen,
+      alternatives,
+      blockChosenBy,
+      refusalBecause: `${deviceClass.id}:outputVoltage`,
+      refusal:
+        (outputOptions.length > 1
+          ? `This family datasheet states ${outputOptions.length} fixed output-voltage options (${outputOptions.join(", ")} V), `
+          : "This family datasheet labels its output-voltage row as a specific ordering variant, ") +
+        "but the requested part number does not select one. Supply the exact ordering value; Forge will not use the first table as the part's voltage."
+    };
+  }
 
   const corners = supportedCorners(chosen, deviceClass);
 

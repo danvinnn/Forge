@@ -383,7 +383,7 @@ export function emitKicadFootprint(geometry: FootprintGeometry, links: KicadLink
         // grid claimed seventeen copies of one pin and KiCad's own
         // duplicate-pad-number checks fired on a correct footprint.
         lines.push(
-          `  (pad "" smd rect (at ${mm(aperture.centre.xMm)} ${mm(aperture.centre.yMm)}) (size ${mm(aperture.widthMm)} ${mm(aperture.heightMm)}) (layers "F.Paste"))`
+          `  (pad "" smd rect (at ${mm(aperture.centre.xMm)} ${mm(aperture.centre.yMm)}${aperture.rotationDeg ? ` ${mm(aperture.rotationDeg)}` : ""}) (size ${mm(aperture.widthMm)} ${mm(aperture.heightMm)}) (layers "F.Paste"))`
         );
       }
       continue;

@@ -45,7 +45,7 @@ import { loadAccount, loadSettings, rememberInstallAnswer, saveAccount, saveSett
 import { answersFromSettings } from "../../lib/settings";
 import { AskPanel, RecordPanel, ReviewList, VerdictCard, WorthAGlance } from "../../lib/record-ui";
 import { choosableFrom, knownNeedsFor, nothingBuildableIn, packageOutcomesOf, readVerdict } from "../../lib/verdict";
-import { answerFor, correctionFor, withField, MAX_FORMED_CONTACT_MM, MAX_LEAD_SPAN_MM } from "../../lib/answers";
+import { answerFor, correctionFor, questionsToShow, withField, MAX_FORMED_CONTACT_MM, MAX_LEAD_SPAN_MM } from "../../lib/answers";
 import { shownRecord, type ReviewItem } from "../../lib/review";
 import { userEdited } from "../../lib/provenance";
 import type { ConfidenceCheck } from "../../lib/confidence";
@@ -57,7 +57,7 @@ import type { Intent } from "../../lib/intent";
 import type { ForgeSettings } from "../../lib/settings";
 import type { ExportFormat, PartRecord } from "../../lib/types";
 import type { FootprintGeometry } from "../../lib/geometry";
-import type { PackageChoice, RequiredInput } from "../../lib/exporters";
+import type { PackageChoice, RequiredInput, SuppliedDimensions } from "../../lib/exporters";
 import { cadElectricalTypeLimitations, cadPendingFindings } from "../../lib/cad-assurance";
 import { automaticOfficialImports, recognizedOfficialArtifact } from "../../lib/official-recovery";
 
@@ -90,13 +90,13 @@ interface Identified {
 }
 
 interface OfficialResource {
-  kind: "spice" | "cad" | "step" | "package-drawing" | "application-note";
+  kind: "spice" | "cad" | "step" | "pinout" | "package-drawing" | "application-note";
   label: string;
   url: string;
 }
 
 interface OfficialImportChoice {
-  kind: "cad" | "step" | "spice";
+  kind: "cad" | "step" | "spice" | "pinout";
   label: string;
   files: Array<{ fileName: string; source: string }>;
   pinEvidence: string | null;
@@ -334,6 +334,7 @@ export default function SuiteWorkspace() {
   const [spiceDirty, setSpiceDirty] = useState(false);
   const [vendorCad, setVendorCad] = useState<File | null>(null);
   const [vendorCadPinEvidence, setVendorCadPinEvidence] = useState<string | null>(null);
+  const [vendorPinout, setVendorPinout] = useState<File | null>(null);
   const [vendorStep, setVendorStep] = useState<File | null>(null);
   const [officialResources, setOfficialResources] = useState<OfficialResource[]>([]);
   const [officialImportChoices, setOfficialImportChoices] = useState<OfficialImportChoice[]>([]);
@@ -365,7 +366,7 @@ export default function SuiteWorkspace() {
     }
     const controller = new AbortController();
     setDiscoveringOfficial(true);
-    void fetch(`/api/resources?partNumber=${encodeURIComponent(partNumber)}&manufacturer=${encodeURIComponent(manufacturer)}`, { signal: controller.signal })
+    void fetch(`/api/resources?partNumber=${encodeURIComponent(partNumber)}&manufacturer=${encodeURIComponent(manufacturer)}${chosenPackage ? `&packageType=${encodeURIComponent(chosenPackage)}` : ""}`, { signal: controller.signal })
       .then((response) => response.ok ? response.json() : { resources: [] })
       .then((payload) => setOfficialResources(Array.isArray(payload.resources) ? payload.resources : []))
       .catch(() => undefined)
@@ -373,7 +374,7 @@ export default function SuiteWorkspace() {
         if (officialResourceIdentity.current === identity) setDiscoveringOfficial(false);
       });
     return () => controller.abort();
-  }, [identified?.partNumber, identified?.manufacturer, part?.partNumber.value, part?.manufacturer.value]);
+  }, [identified?.partNumber, identified?.manufacturer, part?.partNumber.value, part?.manufacturer.value, chosenPackage]);
 
   /**
    * EVERYTHING THE READ RETURNED THAT THIS SHELL USED TO DROP.
@@ -389,9 +390,16 @@ export default function SuiteWorkspace() {
   const [drawingPage, setDrawingPage] = useState<number | null>(null);
   /** Questions the export ASKED, which outrank the ones we knew about. */
   const [pendingNeeds, setPendingNeeds] = useState<RequiredInput[]>([]);
+  /**
+   * Before the first export, the chooser's prediction is the best list of
+   * questions available. Afterwards the server is authoritative, including an
+   * EMPTY list: falling back to the prediction after a terminal validation
+   * refusal resurrected already-answered RHF1201 fields on the screen.
+   */
+  const [cadExportAttempted, setCadExportAttempted] = useState(false);
   const [needValues, setNeedValues] = useState<Record<string, string>>({});
   /** Answers given for THIS part, sent on every retry. */
-  const [supplied, setSupplied] = useState<Record<string, number | string>>({});
+  const [supplied, setSupplied] = useState<SuppliedDimensions>({});
 
   /**
    * THE INSTALLATION, READ ONCE ON MOUNT.
@@ -549,7 +557,7 @@ export default function SuiteWorkspace() {
     [identify]
   );
 
-  const selectOfficialFile = useCallback((kind: "cad" | "step" | "spice", candidate: { fileName: string; source: string }, pinEvidence: string | null = null) => {
+  const selectOfficialFile = useCallback((kind: "cad" | "step" | "spice" | "pinout", candidate: { fileName: string; source: string }, pinEvidence: string | null = null) => {
     const imported = new File([candidate.source], candidate.fileName, { type: "text/plain" });
     if (kind === "cad") {
       setVendorCad(imported);
@@ -558,6 +566,9 @@ export default function SuiteWorkspace() {
     } else if (kind === "step") {
       setVendorStep(imported);
       setStatus(`${imported.name} is ready; Forge will validate and preserve the manufacturer 3D model.`);
+    } else if (kind === "pinout") {
+      setVendorPinout(imported);
+      setStatus(`${imported.name} is ready; Forge will validate its physical pin map when the CAD bundle is built.`);
     } else {
       setVendorModel(imported);
       setVendorCandidates([]);
@@ -591,7 +602,8 @@ export default function SuiteWorkspace() {
       const spiceFiles = files.filter((candidate) => /\.(?:lib|cir|sub|mod|ckt|sp|spi|inc|txt)$/i.test(candidate.fileName));
       const cadFiles = files.filter((candidate) => /\.(?:kicad_mod|lbr)$/i.test(candidate.fileName));
       const stepFiles = files.filter((candidate) => /\.(?:step|stp)$/i.test(candidate.fileName));
-      if (spiceFiles.length + cadFiles.length + stepFiles.length === 0) {
+      const pinoutFiles = files.filter((candidate) => /\.(?:bsd|bsdl)$/i.test(candidate.fileName));
+      if (spiceFiles.length + cadFiles.length + stepFiles.length + pinoutFiles.length === 0) {
         throw new Error("That official resource has no format Forge can import yet.");
       }
       const symbols = files.filter((candidate) => candidate.fileName.toLowerCase().endsWith(".kicad_sym"));
@@ -603,9 +615,11 @@ export default function SuiteWorkspace() {
         partNumber: identified?.partNumber || part?.partNumber.value,
         packageType: chosenPackage || part?.packageType.value
       };
-      const groups: Array<{ kind: "cad" | "step" | "spice"; files: Array<{ fileName: string; source: string }> }> =
+      const groups: Array<{ kind: "cad" | "step" | "spice" | "pinout"; files: Array<{ fileName: string; source: string }> }> =
         resource.kind === "spice"
           ? [{ kind: "spice", files: spiceFiles }]
+          : resource.kind === "pinout"
+            ? [{ kind: "pinout", files: pinoutFiles }]
           : [{ kind: "cad", files: cadFiles }, { kind: "step", files: stepFiles }];
       const choices: OfficialImportChoice[] = [];
       for (const group of groups) {
@@ -618,6 +632,8 @@ export default function SuiteWorkspace() {
             setVendorCadPinEvidence(pinEvidence);
           } else if (group.kind === "step") {
             setVendorStep(imported);
+          } else if (group.kind === "pinout") {
+            setVendorPinout(imported);
           } else {
             setVendorModel(imported);
             setVendorCandidates([]);
@@ -653,11 +669,12 @@ export default function SuiteWorkspace() {
       {
         cad: vendorCad !== null || officialImportChoices.some((choice) => choice.kind === "cad"),
         step: vendorStep !== null || officialImportChoices.some((choice) => choice.kind === "step"),
+        pinout: vendorPinout !== null || officialImportChoices.some((choice) => choice.kind === "pinout"),
         spice: vendorModel !== null || officialImportChoices.some((choice) => choice.kind === "spice")
       },
       attemptedOfficialImports.current
     ),
-    [officialResources, intent, vendorCad, vendorStep, vendorModel, officialImportChoices, importingOfficial]
+    [officialResources, intent, vendorCad, vendorStep, vendorModel, vendorPinout, officialImportChoices, importingOfficial]
   );
 
   // DISCOVERY WITHOUT AUTOMATIC IMPORT WAS STILL A USER TASK. Once the
@@ -671,10 +688,10 @@ export default function SuiteWorkspace() {
     if (queue.length === 0) return;
     let cancelled = false;
     void (async () => {
-      const completed = new Set<"cad" | "step" | "spice">();
+      const completed = new Set<"cad" | "step" | "spice" | "pinout">();
       for (const resource of queue) {
         if (cancelled) break;
-        if (resource.kind !== "cad" && resource.kind !== "step" && resource.kind !== "spice") continue;
+        if (resource.kind !== "cad" && resource.kind !== "step" && resource.kind !== "spice" && resource.kind !== "pinout") continue;
         if (completed.has(resource.kind)) continue;
         attemptedOfficialImports.current.add(resource.url);
         if (await useOfficialResource(resource, true)) completed.add(resource.kind);
@@ -805,6 +822,7 @@ export default function SuiteWorkspace() {
       setPageImages((payload.reviewPages as RenderedPage[]) ?? []);
       setDrawingPage((payload.packageDrawing as { page?: number } | null)?.page ?? null);
       setPendingNeeds([]);
+      setCadExportAttempted(false);
       setSupplied({});
       setPackageChoice((payload.packageChoice as PackageChoice) ?? null);
       const choice = payload.packageChoice as PackageChoice | undefined;
@@ -994,10 +1012,11 @@ export default function SuiteWorkspace() {
   }, [spice, part, file, identified, modelRequest, spiceAnswers, spiceCorrections, spiceDirty, vendorModel, spiceVendorResource, vendorUploadAccepted]);
 
   const takeTheBundle = useCallback(async (
-    answers: Record<string, number | string> = supplied,
+    answers: SuppliedDimensions = supplied,
     download = true
   ): Promise<Blob | null> => {
     if (!part) return null;
+    setCadExportAttempted(true);
     setBusy(true);
     setRefusal(null);
     setStatus(`Building the ${FORMATS.find((f) => f.value === format)?.label ?? format} bundle…`);
@@ -1012,6 +1031,7 @@ export default function SuiteWorkspace() {
             ? { importedCad: { fileName: vendorCad.name, source: await vendorCad.text(), ...(vendorCadPinEvidence ? { pinEvidence: vendorCadPinEvidence } : {}) } }
             : {}),
           ...(vendorStep ? { importedStep: { fileName: vendorStep.name, source: await vendorStep.text() } } : {}),
+          ...(vendorPinout ? { importedPinout: { fileName: vendorPinout.name, source: await vendorPinout.text() } } : {}),
           // The package the user is HOLDING. This is what makes `/api/export`
           // apply `asPackage`, which is the only place the relabelling rule is.
           ...(needsPackage && chosenPackage ? { packageType: chosenPackage } : {}),
@@ -1114,7 +1134,7 @@ export default function SuiteWorkspace() {
     } finally {
       setBusy(false);
     }
-  }, [part, format, needsPackage, chosenPackage, settings, supplied, review, toCheck, packageChoice, vendorCad, vendorCadPinEvidence, vendorStep]);
+  }, [part, format, needsPackage, chosenPackage, settings, supplied, review, toCheck, packageChoice, vendorCad, vendorCadPinEvidence, vendorStep, vendorPinout]);
 
   /**
    * Answers one outstanding question and retries the export immediately.
@@ -1136,7 +1156,7 @@ export default function SuiteWorkspace() {
         rememberInstallAnswer(need.field, judged.value);
         setSettings((current) => ({ ...current, [need.field]: judged.value as number }));
       }
-      const answers = { ...supplied, [need.field]: judged.value };
+      const answers = { ...supplied, [need.field]: judged.value } as SuppliedDimensions;
       setSupplied(answers);
       // THE ANSWER STAYS IN THE BOX.
       //
@@ -1191,6 +1211,7 @@ export default function SuiteWorkspace() {
     setSpiceDirty(false);
     setVendorCad(null);
     setVendorCadPinEvidence(null);
+    setVendorPinout(null);
     setVendorStep(null);
     setOfficialResources([]);
     setOfficialImportChoices([]);
@@ -1203,6 +1224,7 @@ export default function SuiteWorkspace() {
     setPageImages([]);
     setDrawingPage(null);
     setPendingNeeds([]);
+    setCadExportAttempted(false);
     setNeedValues({});
     setSupplied({});
     setStatus("");
@@ -1296,8 +1318,11 @@ export default function SuiteWorkspace() {
     [packageChoice, part]
   );
   const knownNeeds = useMemo(() => knownNeedsFor(packageChoice, activePackage), [packageChoice, activePackage]);
-  /** What the export ASKED outranks what we guessed it would ask. */
-  const shownNeeds = pendingNeeds.length > 0 ? pendingNeeds : knownNeeds;
+  /**
+   * What the export ASKED outranks what the chooser predicted. Once an export
+   * has answered, its empty list is meaningful and must not revive stale boxes.
+   */
+  const shownNeeds = questionsToShow(cadExportAttempted, pendingNeeds, knownNeeds);
   const blockingReview = useMemo(() => review.filter((item) => item.blocking), [review]);
   const activeConfirmation = useMemo(
     () =>
@@ -1818,6 +1843,23 @@ export default function SuiteWorkspace() {
                     </div>
                     <p className="frame-note">Optional. Forge imports vendor copper into its neutral geometry, checks it against this part, and emits it in your selected format.</p>
                     <div className="vendor-model-controls cad-import-controls">
+                      <label className="btn" htmlFor="vendor-pinout-file">Use manufacturer BSDL pinout</label>
+                      <input
+                        id="vendor-pinout-file"
+                        className="visually-hidden"
+                        type="file"
+                        accept=".bsd,.bsdl"
+                        onChange={(event) => {
+                          const chosen = event.target.files?.[0] ?? null;
+                          setVendorPinout(chosen);
+                          setOfficialImportChoices((choices) => choices.filter((choice) => choice.kind !== "pinout"));
+                          setStatus(chosen ? `${chosen.name} will supply physical pin names after Forge validates the complete package map.` : "");
+                        }}
+                      />
+                      <span className="vendor-file">{vendorPinout?.name ?? "No manufacturer BSDL selected"}</span>
+                    </div>
+                    <p className="frame-note">Optional recovery for large digital devices whose datasheet pin table could not be read. Forge accepts only a complete, non-conflicting physical pin map.</p>
+                    <div className="vendor-model-controls cad-import-controls">
                       <label className="btn" htmlFor="vendor-step-file">Use vendor 3D model</label>
                       <input
                         id="vendor-step-file"
@@ -1835,12 +1877,12 @@ export default function SuiteWorkspace() {
                     </div>
                     <p className="frame-note">Optional. Forge preserves a complete manufacturer STEP model and links or embeds it in the selected CAD format.</p>
                     </details>
-                    {officialResources.some((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "package-drawing") && (
+                    {officialResources.some((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "pinout" || resource.kind === "package-drawing") && (
                       <ul className="resource-links" aria-label="Official CAD resources found automatically">
-                        {officialResources.filter((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "package-drawing").map((resource) => (
+                        {officialResources.filter((resource) => resource.kind === "cad" || resource.kind === "step" || resource.kind === "pinout" || resource.kind === "package-drawing").map((resource) => (
                           <li key={resource.url}>
                             <a href={resource.url} target="_blank" rel="noreferrer">{resource.label}</a>
-                            {(resource.kind === "cad" || resource.kind === "step") && <button type="button" className="btn btn-quiet" disabled={busy || importingOfficial} onClick={() => void useOfficialResource(resource)}>Import</button>}
+                            {(resource.kind === "cad" || resource.kind === "step" || resource.kind === "pinout") && <button type="button" className="btn btn-quiet" disabled={busy || importingOfficial} onClick={() => void useOfficialResource(resource)}>Import</button>}
                           </li>
                         ))}
                       </ul>
@@ -1874,6 +1916,22 @@ export default function SuiteWorkspace() {
                               <li key={candidate.fileName}>
                                 <span className="vendor-file" title={candidate.fileName}>{candidate.fileName}</span>
                                 <button type="button" className="btn btn-quiet" onClick={() => selectOfficialFile("step", candidate)}>Use this 3D model</button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
+                    {officialImportChoices.find((choice) => choice.kind === "pinout") && (() => {
+                      const officialImportChoice = officialImportChoices.find((choice) => choice.kind === "pinout")!;
+                      return (
+                        <div className="resource-choice" role="group" aria-labelledby="pinout-resource-choice-heading">
+                          <p id="pinout-resource-choice-heading"><strong>Choose the manufacturer BSDL for your selected package.</strong></p>
+                          <ul className="resource-links">
+                            {officialImportChoice.files.map((candidate) => (
+                              <li key={candidate.fileName}>
+                                <span className="vendor-file" title={candidate.fileName}>{candidate.fileName}</span>
+                                <button type="button" className="btn btn-quiet" onClick={() => selectOfficialFile("pinout", candidate)}>Use this pinout</button>
                               </li>
                             ))}
                           </ul>

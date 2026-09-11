@@ -14,8 +14,12 @@ export function buildPartVariants(partNumber: string): string[] {
   const normalized = normalizePartNumber(partNumber);
   const variants = new Set<string>([normalized]);
 
-  // Drop a package/ordering suffix after a separator: LMP7704-SP -> LMP7704.
-  variants.add(normalized.replace(/[-_].*$/, ""));
+  // Drop one package/ordering suffix: LMP7704-SP -> LMP7704. A multi-segment
+  // name such as ESP32-S3-WROOM-1 is a product identity, not a suffix; reducing
+  // it to ESP32 retrieves the chip datasheet for a module and is unsafe.
+  if ((normalized.match(/[-_]/g) ?? []).length === 1) {
+    variants.add(normalized.replace(/[-_][A-Z0-9.]{1,8}$/, ""));
+  }
 
   // Drop a trailing option code after a numeric family: INA240A1 -> INA240.
   variants.add(normalized.replace(/(.*\d)[A-Z]+\d*$/, "$1"));

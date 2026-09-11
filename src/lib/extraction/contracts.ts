@@ -1,5 +1,5 @@
 import type { RenderedPage } from "../pagerender";
-import type { PinRecord } from "../types";
+import type { AuxiliaryPadRecord, PinRecord, TerminalPadRecord } from "../types";
 
 /**
  * Layer 2 extraction model contract.
@@ -69,6 +69,7 @@ export const extractionFields = [
   // feature the part is soldered by.
   "dimensions.thermalPadLengthMm",
   "dimensions.thermalPadWidthMm",
+  "dimensions.thermalPadRotationDeg",
   // The land pattern THE DATASHEET ITSELF PRINTS, which is the answer rather
   // than a check on one.
   //
@@ -117,6 +118,8 @@ export const extractionFields = [
   "dimensions.solderMaskDefined",
   "dimensions.thermalViaDiameterMm",
   "dimensions.thermalViaPitchMm",
+  "dimensions.auxiliaryPads",
+  "dimensions.terminalPads",
   "jedecOutline",
   // The vendor's own code for this package's drawing (`DW0016B`, `PW0008A`).
   //
@@ -146,7 +149,7 @@ export interface ModelRange {
 }
 
 export interface ModelValue {
-  value: string | number | PinRecord[] | ModelRange | null;
+  value: string | number | PinRecord[] | AuxiliaryPadRecord[] | TerminalPadRecord[] | ModelRange | null;
   /** 1-indexed page the model says the value appears on, if it reported one. */
   page: number | null;
 }

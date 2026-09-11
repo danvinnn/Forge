@@ -198,6 +198,34 @@ test("an official vendor symbol contradiction refuses imported copper", async ()
   assert.match(payload.error, /pin names and numbering/i);
 });
 
+test("a complete manufacturer BSDL unlocks export when the datasheet pin table was unreadable", async () => {
+  const part = exportablePart("8-pin SOIC", 8);
+  part.pins = unknown();
+  const mapping = Array.from({ length: 8 }, (_, index) => `P${index + 1} : ${index + 1}`).join(", ");
+  const bsdl = `entity ACME is generic (PHYSICAL_PIN_MAP : string := "SOIC8"); constant SOIC8 : PIN_MAP_STRING := "${mapping}"; end ACME;`;
+  const response = await POST(post({
+    part,
+    format: "kicad",
+    importedPinout: { fileName: "ACME_SOIC8.bsdl", source: bsdl }
+  }));
+  assert.equal(response.status, 200, await response.clone().text());
+});
+
+test("a manufacturer BSDL with the wrong terminal count cannot unlock export", async () => {
+  const part = exportablePart("8-pin SOIC", 8);
+  part.pins = unknown();
+  const response = await POST(post({
+    part,
+    format: "kicad",
+    importedPinout: {
+      fileName: "WRONG.bsdl",
+      source: `entity ACME is generic (PHYSICAL_PIN_MAP : string := "MAP"); constant MAP : PIN_MAP_STRING := "P1 : 1, P2 : 2"; end ACME;`
+    }
+  }));
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).code, "VENDOR_PINOUT_UNUSABLE");
+});
+
 test("an unscopable optional symbol library does not discard valid imported copper", async () => {
   const ambiguous = `(kicad_symbol_lib ${importedSymbol("OTHER1").replace(/^\(kicad_symbol_lib |\)$/g, "")} ${importedSymbol("OTHER2").replace(/^\(kicad_symbol_lib |\)$/g, "")})`;
   const response = await POST(post({
@@ -374,7 +402,7 @@ test("a land pattern the user supplies is validated before it becomes copper", a
   // 2026-08-17 so a TO-220, TO-92 or SIP could be represented at all, and this
   // route went on rejecting it: the generator asked for it, the UI offered a box
   // that accepts it, and the answer came back 400. This test pinned that.
-  for (const bad of [0, 3, 8, "2"]) {
+  for (const bad of [0, 8, "2"]) {
     const response = await POST(
       post({ part: exportablePart("12-Pin BGA", 12), format: "kicad", leadSides: bad })
     );
@@ -382,7 +410,7 @@ test("a land pattern the user supplies is validated before it becomes copper", a
   }
   // Every value the record accepts is accepted here. A field the record admits
   // and the route refuses is an unanswerable question.
-  for (const good of [1, 2, 4]) {
+  for (const good of [1, 2, 3, 4]) {
     const response = await POST(
       post({ part: exportablePart("12-Pin BGA", 12), format: "kicad", leadSides: good })
     );
@@ -397,6 +425,45 @@ test("a nonsense lead span is refused before it reaches the generator", async ()
     );
     assert.equal(response.status, 400, `formedLeadSpanMm ${JSON.stringify(span)} must be rejected`);
   }
+});
+
+test("an irregular small bottom-terminal package asks once for its exact numbered lands and then ships them", async () => {
+  const part = exportablePart("XDFN4", 4);
+  part.dimensions.leadForm = citedValue<"gullwing" | "nolead" | "straight">("nolead");
+  part.dimensions.mounting = citedValue<"smd" | "through-hole">("smd");
+  part.dimensions.leadSpanMm = unknown();
+  part.dimensions.leadContactMm = unknown();
+  part.dimensions.leadWidthMm = unknown();
+  part.dimensions.leadSides = unknown();
+
+  const first = await POST(post({ part, format: "kicad" }));
+  const question = await first.json();
+  assert.equal(first.status, 422);
+  assert.equal(question.code, "INPUT_REQUIRED");
+  assert.deepEqual(question.needs.map((need: { field: string }) => need.field), ["terminalPads"]);
+  assert.equal(question.needs[0].unit, "terminal-layout");
+
+  const terminalPads = [
+    { number: "1", xMm: -0.325, yMm: 0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" },
+    { number: "2", xMm: -0.325, yMm: -0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" },
+    { number: "3", xMm: 0.325, yMm: -0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" },
+    { number: "4", xMm: 0.325, yMm: 0.48, widthMm: 0.26, heightMm: 0.24, shape: "rect" }
+  ];
+  const incomplete = await POST(post({ part, format: "kicad", terminalPads: terminalPads.slice(0, 3) }));
+  assert.equal(incomplete.status, 400);
+  assert.match((await incomplete.json()).error, /Missing: 4/);
+
+  const second = await POST(post({ part, format: "kicad", terminalPads }));
+  const bytes = await second.arrayBuffer();
+  assert.equal(second.status, 200, second.status === 200 ? undefined : Buffer.from(bytes).toString("utf8"));
+  const zip = await JSZip.loadAsync(bytes);
+  const footprint = await zip.file(/\.kicad_mod$/)[0].async("string");
+  assert.match(footprint, /\(pad "1" smd rect \(at -0\.325 0\.480\) \(size 0\.260 0\.240\)/);
+  const recordName = Object.keys(zip.files).find((name) => /\.json$/i.test(name) && name !== "manifest.json");
+  assert.ok(recordName);
+  const record = JSON.parse(await zip.file(recordName)!.async("string"));
+  assert.equal(record.footprint.arrangement, "explicit-numbered-lands");
+  assert.deepEqual(record.dimensions.terminalPads, terminalPads);
 });
 
 // ---------------------------------------------------------------------------
@@ -433,12 +500,28 @@ const ASKABLE: Array<{ field: string; good: unknown; bad: unknown }> = [
   // centre spans and the record carried one, so an unread second axis was being
   // read as "the same as the first", which is a guess dressed as a reading.
   { field: "landSpanCrossMm", good: 6.4, bad: 0 },
-  { field: "leadSides", good: 2, bad: 3 },
-  { field: "leadsPerSide", good: "6,6,6,5", bad: "6,6,6" },
+  { field: "leadSides", good: 3, bad: 5 },
+  { field: "leadsPerSide", good: "14,12,14", bad: "6" },
   { field: "thermalPadLengthMm", good: 2.1, bad: 0 },
   { field: "thermalPadWidthMm", good: 2.1, bad: -2 },
   { field: "vacantLeadSlot", good: 2, bad: 0 },
-  { field: "mounting", good: "smd", bad: "maybe" }
+  { field: "mounting", good: "smd", bad: "maybe" },
+  { field: "thermalPadRotationDeg", good: 45, bad: 500 },
+  {
+    field: "terminalPads",
+    good: pins(8).map((pin, index) => ({
+      number: pin.number,
+      xMm: index < 4 ? -3 : 3,
+      yMm: index < 4 ? index - 1.5 : 6.5 - index,
+      widthMm: 1,
+      heightMm: 0.6,
+      shape: "rect"
+    })),
+    bad: [
+      { number: "1", xMm: -1, yMm: 0, widthMm: 1, heightMm: 0.6, shape: "rect" },
+      { number: "1", xMm: 1, yMm: 0, widthMm: 1, heightMm: 0.6, shape: "rect" }
+    ]
+  }
 ];
 
 /**
@@ -495,6 +578,14 @@ async function askedFields(): Promise<Set<string>> {
     (() => {
       const part = strip(exportablePart("DIP-8", 8), ["leadSpanMm", "leadContactMm", "leadWidthMm", "pitchMm"]);
       part.dimensions.mounting = citedValue<"smd" | "through-hole">("through-hole");
+      return part;
+    })(),
+    // A small bottom-terminal package whose drawing could not be reduced to
+    // ordinary rows. Its one honest answer is the complete numbered layout.
+    (() => {
+      const part = strip(exportablePart("XDFN4", 4), ["leadSpanMm", "leadContactMm", "leadWidthMm", "leadSides"]);
+      part.dimensions.leadForm = citedValue<"gullwing" | "nolead" | "straight">("nolead");
+      part.dimensions.mounting = citedValue<"smd" | "through-hole">("smd");
       return part;
     })()
   ];
