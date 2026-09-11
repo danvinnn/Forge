@@ -36,6 +36,7 @@ import {
   type SuppliedDimensions
 } from "../exporters";
 import { pinTableFor } from "../packagevariants";
+import { isGridAddressed } from "../geometry";
 import { answersFromSettings, densityOf, type ForgeSettings } from "../settings";
 import { resolveForExport, type PartRecord, type ResolvedPart } from "../types";
 
@@ -64,6 +65,7 @@ function answerFor(need: RequiredInput, record: PartRecord, designator?: string)
   // its own arithmetic as a product defect, which is the one thing this line
   // must never do.
   const perPackage = designator ? pinTableFor(record.packagesInThisDocument, designator)?.dimensions : undefined;
+  const packagePins = designator ? pinTableFor(record.packagesInThisDocument, designator)?.pins : undefined;
   const dims = { ...record.dimensions, ...(perPackage ?? {}) } as PartRecord["dimensions"];
   const num = (value: unknown): number | null => (typeof value === "number" && value > 0 ? value : null);
   const span = (value: unknown): number | null =>
@@ -75,6 +77,7 @@ function answerFor(need: RequiredInput, record: PartRecord, designator?: string)
   const pitch = num(dims.pitchMm.value) ?? 0.5;
   const pins = num(record.pinCount.value) ?? 8;
   const sides = dims.leadSides.value ?? (pins % 4 === 0 && pins >= 16 ? 4 : 2);
+  const gridAddressed = isGridAddressed(packagePins ?? record.pins.value ?? []);
 
   switch (need.field) {
     case "bodyLengthMm":
@@ -85,9 +88,15 @@ function answerFor(need: RequiredInput, record: PartRecord, designator?: string)
       return num(dims.bodyHeightMm.value) ?? 1;
     // The pad's radial length and tangential width. A no-lead package's pad is
     // about the lead's own contact length and a little over half the pitch
-    // wide, which is what keeps neighbours clear at any pitch.
-    case "landPadLengthMm":
-      return span(dims.leadContactMm.value) ?? Math.max(0.4, Math.min(1, pitch * 1.2));
+    // wide, which is what keeps neighbours clear at any pitch. A grid land is
+    // different: this field is its diameter, so the stand-in must remain below
+    // the centre-to-centre pitch or the BENCH creates a short and attributes it
+    // to the product. This proves only that a valid answer unlocks the route;
+    // it never claims the stand-in is the document's value.
+    case "landPadLengthMm": {
+      const ordinary = span(dims.leadContactMm.value) ?? Math.max(0.4, Math.min(1, pitch * 1.2));
+      return gridAddressed ? Math.min(ordinary, pitch * 0.55) : ordinary;
+    }
     case "landPadWidthMm":
       return Math.max(0.2, pitch * 0.55);
     // The centre-to-centre span across the package. Derived from the body so the
@@ -120,13 +129,21 @@ function answerFor(need: RequiredInput, record: PartRecord, designator?: string)
     case "vacantLeadSlot":
       return Math.max(1, Math.floor(pins / 2) + 1);
     case "formedLeadSpanMm":
-      return span(dims.leadSpanMm.value) ?? body + 1;
+      // The question is asked precisely because the installation-wide span (or
+      // the straight, unformed span read from the drawing) does not clear this
+      // package. Repeating either value makes the benchmark reject an answer a
+      // real assembler can supply. Use a self-consistent witness that clears
+      // the known body; it demonstrates answerability and is not an oracle.
+      return Math.max(span(dims.leadSpanMm.value) ?? 0, body + 1);
     case "formedLeadContactMm":
       return span(dims.leadContactMm.value) ?? 0.6;
     case "mounting":
       return dims.mounting.value ?? "smd";
   }
 }
+
+/** The benchmark's witness generator, exported only so its invariants can be tested. */
+export const answerForBenchTest = answerFor;
 
 /**
  * WHICH DRAWING THE COPPER CAME FROM.
@@ -510,7 +527,23 @@ async function exportWithAnswers(
   forPackage?: string
 ): Promise<{ ok: true; asked: number; shippedAs: ShippedPackage } | { ok: false; why: string }> {
   const supplied: Record<string, unknown> = {};
+  let formedLeadSpanMm = settings.formedLeadSpanMm;
+  let formedLeadContactMm = settings.formedLeadContactMm;
+  const answeredFields = new Set<string>();
   let asked = 0;
+
+  // These two answers are dedicated export arguments, not generic dimensions
+  // on the part record. `/api/export` reads them from the top-level payload and
+  // lets a per-part answer override the installation setting. Putting them in
+  // `supplied` made this bench silently keep using the setting that prompted
+  // the question, then report that the product refused a valid answer.
+  const applyAnswer = (need: RequiredInput, designator?: string) => {
+    const answer = answerFor(need, record, designator);
+    if (need.field === "formedLeadSpanMm") formedLeadSpanMm = answer as number;
+    else if (need.field === "formedLeadContactMm") formedLeadContactMm = answer as number;
+    else supplied[need.field] = answer;
+    answeredFields.add(need.field);
+  };
 
   // A QUESTION SET ARRIVES IN ROUNDS, and so does the user's answer.
   //
@@ -527,13 +560,8 @@ async function exportWithAnswers(
   const MAX_ROUNDS = 4;
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
     const outstanding = round === 0 ? needs : null;
-    if (outstanding) for (const need of outstanding) supplied[need.field] = answerFor(need, record, forPackage);
-    asked = Object.keys(supplied).length;
-
-    const answers: OptionAnswers = {
-      ...installAnswers(settings),
-      supplied: supplied as SuppliedDimensions
-    };
+    if (outstanding) for (const need of outstanding) applyAnswer(need, forPackage);
+    asked = answeredFields.size;
 
     // Route one, the record as it stands.
     const resolved = resolveForExport(record);
@@ -541,8 +569,8 @@ async function exportWithAnswers(
       try {
         await createExportZip(resolved.part, "kicad", {
           densityLevel: densityOf(settings),
-          formedLeadSpanMm: settings.formedLeadSpanMm,
-          formedLeadContactMm: settings.formedLeadContactMm,
+          formedLeadSpanMm,
+          formedLeadContactMm,
           supplied: supplied as SuppliedDimensions
         });
         return {
@@ -552,10 +580,20 @@ async function exportWithAnswers(
         };
       } catch (error) {
         if (error instanceof FootprintUnavailableError && error.needs.length > 0) {
-          for (const need of error.needs) supplied[need.field] = answerFor(need, record, forPackage);
+          for (const need of error.needs) applyAnswer(need, forPackage);
         }
       }
     }
+
+    // Build this after route one: that attempt can reveal another round of
+    // questions, and every answer it adds must reach route two in the same
+    // shape the production request uses.
+    asked = answeredFields.size;
+    const answers: OptionAnswers = {
+      ...(formedLeadSpanMm !== undefined ? { formedLeadSpanMm } : {}),
+      ...(formedLeadContactMm !== undefined ? { formedLeadContactMm } : {}),
+      supplied: supplied as SuppliedDimensions
+    };
 
     // Route two, whatever the chooser offers once the answers are in hand.
     const choice = packageOptions(record, answers);
@@ -565,14 +603,14 @@ async function exportWithAnswers(
       ? choice.options.find((option) => option.status === "needs-input")
       : undefined;
     if (stillAsking && stillAsking.status === "needs-input") {
-      const fresh = stillAsking.needs.filter((need) => supplied[need.field] === undefined);
+      const fresh = stillAsking.needs.filter((need) => !answeredFields.has(need.field));
       if (fresh.length === 0) {
         return { ok: false, why: `asks for ${stillAsking.needs.map((n) => n.field).join(",")} and refuses the answers` };
       }
-      for (const need of fresh) supplied[need.field] = answerFor(need, record, stillAsking.designator);
+      for (const need of fresh) applyAnswer(need, stillAsking.designator);
       continue;
     }
-    if (Object.keys(supplied).length === asked) {
+    if (answeredFields.size === asked) {
       const unsupported = choice.ok ? choice.options.find((option) => option.status === "unsupported") : undefined;
       return { ok: false, why: (unsupported?.reason ?? "refused with no reason given").slice(0, 90) };
     }

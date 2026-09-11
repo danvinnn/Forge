@@ -99,6 +99,7 @@ async function main(): Promise<void> {
 
   const reasons = new Map<string, string[]>();
   const shipRefusals = new Map<string, string[]>();
+  const answeredRefusals = new Map<string, string[]>();
   const flagged: number[] = [];
   const flagReasons = new Map<string, string[]>();
   const jointFindings: string[] = [];
@@ -173,6 +174,12 @@ async function main(): Promise<void> {
     // and it understates this corpus badly: every one of the 14 parts counted as
     // a failure here is a part that ships the moment a question is answered.
     if (outcome.shipsAnswered) shipsAnswered += 1;
+    else if (outcome.brokeWhenAnswered !== null) {
+      answeredRefusals.set(
+        outcome.brokeWhenAnswered,
+        [...(answeredRefusals.get(outcome.brokeWhenAnswered) ?? []), name]
+      );
+    }
     if (!outcome.ships) {
       shipRefusals.set(outcome.why, [...(shipRefusals.get(outcome.why) ?? []), name]);
       continue;
@@ -249,6 +256,14 @@ async function main(): Promise<void> {
   if (shipRefusals.size > 0) {
     console.log("\nWHY A READ PART DID NOT SHIP\n");
     for (const [why, parts] of [...shipRefusals].sort((left, right) => right[1].length - left[1].length)) {
+      console.log(`  ${String(parts.length).padStart(3)}  ${why.slice(0, 90)}`);
+      console.log(`       ${parts.join(" ")}`);
+    }
+  }
+
+  if (answeredRefusals.size > 0) {
+    console.log("\nWHY AN ANSWERED PART STILL DID NOT SHIP\n");
+    for (const [why, parts] of [...answeredRefusals].sort((left, right) => right[1].length - left[1].length)) {
       console.log(`  ${String(parts.length).padStart(3)}  ${why.slice(0, 90)}`);
       console.log(`       ${parts.join(" ")}`);
     }

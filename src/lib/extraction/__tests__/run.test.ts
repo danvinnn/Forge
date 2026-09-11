@@ -187,10 +187,10 @@ test("on a REAL pdf the second pass happens, and carries the pages the model ask
   const outcome = await runExtraction(part, real, buffer, model, "LMP7704-SP.pdf");
   assert.ok(outcome);
 
-  assert.equal(model.seen.length, 3, "the broad and drawing passes ran before the independently checked pin recovery");
+  assert.equal(model.seen.length, 3, "the broad and drawing passes ran before the focused pin recovery");
   assert.equal(model.seen[0].images.length, 0, "first pass: text only");
   assert.ok(model.seen[1].images.length > 0, "second pass: the page was rendered and attached");
-  assert.deepEqual(model.seen[2].fields, ["pins"]);
+  assert.deepEqual(model.seen[2].fields, ["pins", "pinCount"]);
   assert.ok(
     model.seen[1].images.map((image) => image.page).includes(outline.page),
     "and the page the MODEL asked for is among them: nothing may drop its choice"
@@ -271,7 +271,7 @@ test("an inspected irregular board layout gets one narrow numbered-land recovery
   assert.deepEqual(outcome.part.dimensions.terminalPads?.value, terminalPads);
 });
 
-test("an active-device pin recovery is accepted only when PDF geometry independently confirms every row", async () => {
+test("an active-device pin recovery uses the ordinary merge while release assurance owns confirmation", async () => {
   const { fileURLToPath } = await import("node:url");
   const { extractDatasheetText } = await import("../../pdftext");
   const path = fileURLToPath(new URL("../../../../test-data/LMP7704-SP.pdf", import.meta.url));
@@ -296,15 +296,40 @@ test("an active-device pin recovery is accepted only when PDF geometry independe
   const accepted = await runExtraction(
     buildPartRecord(real, "LMP7704-SP.pdf"), real, buffer, acceptedModel, "LMP7704-SP.pdf", "LMP7704-SP"
   );
-  assert.deepEqual(acceptedModel.seen[1].fields, ["pins"]);
+  assert.deepEqual(acceptedModel.seen[1].fields, ["pins", "pinCount"]);
+  assert.equal(
+    acceptedModel.seen[1].pages.length,
+    real.pages.length,
+    "the pinout images retain the full text context that identifies family packages"
+  );
   assert.equal(accepted?.part.pins.value?.length, 14);
 
   const shifted = pins.map((pin, index) => index === 0 ? { ...pin, name: "IN A-" } : pin);
-  const rejectedModel = stub([first, { values: { pins: { value: shifted, page: 3 } } }]);
-  const rejected = await runExtraction(
-    buildPartRecord(real, "LMP7704-SP.pdf"), real, buffer, rejectedModel, "LMP7704-SP.pdf", "LMP7704-SP"
+  const reviewGatedModel = stub([first, { values: { pins: { value: shifted, page: 3 } } }]);
+  const reviewGated = await runExtraction(
+    buildPartRecord(real, "LMP7704-SP.pdf"), real, buffer, reviewGatedModel, "LMP7704-SP.pdf", "LMP7704-SP"
   );
-  assert.equal(rejected?.part.pins.value, null, "one shifted name keeps the whole proposed table out of the record");
+  assert.deepEqual(
+    reviewGated?.part.pins.value?.map((pin) => pin.name),
+    shifted.map((pin) => pin.name),
+    "extraction retains a structurally valid reading; the shared confirmation layer must flag its disagreement"
+  );
+
+  const packageModel = stub([
+    { values: {} },
+    {
+      values: {},
+      packagesInThisDocument: [{ packageType: "14-pin CFP", pins }]
+    }
+  ]);
+  const packageRecovered = await runExtraction(
+    buildPartRecord(real, "LMP7704-SP.pdf"), real, buffer, packageModel, "LMP7704-SP.pdf", "LMP7704-SP"
+  );
+  assert.equal(
+    packageRecovered?.part.packagesInThisDocument?.[0]?.pins?.length,
+    14,
+    "a focused family-document answer is retained per package instead of being discarded for lacking flat pins"
+  );
 });
 
 test("a missed gull-wing outline gets one focused recovery before asking for a land pattern", async () => {
@@ -332,7 +357,7 @@ test("a missed gull-wing outline gets one focused recovery before asking for a l
   const outcome = await runExtraction(part, real, buffer, model, "ACME-SOIC.pdf", "ACME-SOIC");
   assert.ok(outcome);
   assert.equal(model.seen.length, 4);
-  assert.deepEqual(model.seen[2].fields, ["pins"]);
+  assert.deepEqual(model.seen[2].fields, ["pins", "pinCount"]);
   assert.ok(model.seen[3].fields.includes("dimensions.leadSpanMm"));
   assert.ok(!model.seen[3].fields.includes("dimensions.bodyLengthMm"), "the retry asks only footprint-critical gaps");
   assert.deepEqual(outcome.part.dimensions.leadSpanMm.value, { minMm: 5.8, maxMm: 6.2 });

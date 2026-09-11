@@ -34,7 +34,6 @@ import { buildExtractionRequest, withRenderedPages } from "./request";
 import type { RenderedPage } from "../pagerender";
 import { findPackageDrawing } from "../packagedrawing";
 import { mergeModelValues, type MergeOutcome } from "./merge";
-import { pinoutEvidence } from "../pinevidence";
 import {
   declaredLeadCount,
   familyToken,
@@ -846,6 +845,39 @@ export const combineForTest = (first: ExtractionResult, second: ExtractionResult
   combine(first, second, partNumber);
 
 /**
+ * Keep a focused pinout answer focused.
+ *
+ * Model contracts are instructions, not a type boundary: a provider may return
+ * dimensions even when the request named only pins. Letting those extras enter
+ * through a pin recovery would bypass the dedicated drawing recovery and make
+ * the accepted evidence depend on provider helpfulness. Package identity stays
+ * because it is what keeps multiple pin tables separate; package dimensions do
+ * not.
+ */
+function pinRecoveryOnly(result: ExtractionResult): ExtractionResult {
+  const values: ExtractionResult["values"] = {};
+  if (result.values.pins !== undefined) values.pins = result.values.pins;
+  if (result.values.pinCount !== undefined) values.pinCount = result.values.pinCount;
+  const packages = (result.packagesInThisDocument ?? [])
+    .filter((entry) => Array.isArray(entry.pins) && entry.pins.length > 0)
+    .map((entry) => ({
+      packageType: entry.packageType,
+      ...(entry.outlineCode ? { outlineCode: entry.outlineCode } : {}),
+      ...(entry.alsoKnownAs && entry.alsoKnownAs.length > 0 ? { alsoKnownAs: entry.alsoKnownAs } : {}),
+      pins: entry.pins
+    }));
+  const declined = (result.declined ?? []).filter((field) => field === "pins" || field === "pinCount");
+  return {
+    ...(result.answeredBy ? { answeredBy: result.answeredBy } : {}),
+    values,
+    ...(declined.length > 0 ? { declined } : {}),
+    ...(result.notes && result.notes.length > 0 ? { notes: result.notes } : {}),
+    ...(result.unreadable ? { unreadable: true as const } : {}),
+    ...(packages.length > 0 ? { packagesInThisDocument: packages } : {})
+  };
+}
+
+/**
  * The second pass, asked ONE more time before it is allowed to fail.
  *
  * `callWithRetry` in `transport.ts` already retries three times inside a single
@@ -1331,13 +1363,28 @@ export async function runExtraction(
     combined = combine(combined, recoveredPins, partNumber ?? part.partNumber.value ?? undefined);
   }
 
-  // Dense active-device pinouts may be retried only when an independent text-
-  // geometry reader can verify every returned number/name pair. A previous
-  // unrestricted focused retry shifted 22 STM32 pins while preserving counts
-  // and name multisets; accepting a second model answer would repeat that
-  // defect. Here the model proposes a table and `pinoutEvidence`—which reads
-  // collinear numbers and names directly from PDF glyph positions—must confirm
-  // the entire table before it enters the record.
+  // A missed active-device pinout gets one narrow read with high-resolution
+  // images of the pages that identify themselves as pinout pages. Keep the
+  // whole document's TEXT on this request: family identity, ordering codes and
+  // the mapping from package captions to orderables routinely live outside the
+  // pinout section. Giving the recovery only its selected pages asks it to
+  // separate several correct tables after withholding the text that says which
+  // table belongs to which package. Images remain focused, so this does not
+  // resend every page visually.
+  //
+  // Ask for the count with the rows: the two are one contract, and the ordinary
+  // merge can then reject gaps, duplicates, malformed rows and uncitable claims
+  // exactly as it does for a pinout returned by the broad pass.
+  //
+  // Independent numbering evidence does NOT belong at this extraction
+  // boundary. `confirmations()` applies it to every resolved symbol regardless
+  // of which pass read the pins, and review-gates the symbol when the PDF text
+  // geometry cannot corroborate it. Requiring corroboration here as well was
+  // both stricter and inconsistent: the same cited table was retained when the
+  // broad pass returned it and silently discarded when this focused pass did.
+  // It also discarded package-separated tables wholesale because there is no
+  // single flat table to compare. Keep the reading here; let the shared release
+  // assurance decide whether it is confirmed or visibly needs review.
   if (
     request.fields.includes("pins") &&
     combined.values.pins === undefined &&
@@ -1368,35 +1415,18 @@ export async function runExtraction(
     if (focusedVisual && focusedVisual.images.length > 0) {
       const focusedPins: ExtractionRequest = {
         ...focusedVisual,
-        fields: ["pins"],
+        pages: request.pages,
+        fields: ["pins", "pinCount"],
         packageType: selectedForGeometry,
-        packageCandidates: undefined,
+        packageCandidates: selectedForGeometry === null ? request.packageCandidates : undefined,
         sourceDocument: undefined
       };
       const recoveredPins = await askTwice(model, focusedPins, focusedPins.images.length);
-      const candidate = combine(combined, recoveredPins, partNumber ?? part.partNumber.value ?? undefined);
-      const tentative = mergeModelValues(
-        part,
-        doc,
-        candidate,
-        candidate.answeredBy ?? model.name,
-        focusedPins.images.map((image) => image.page)
-      ).part;
-      const pins = tentative.pins.value ?? [];
-      const count = tentative.pinCount.value ?? 0;
-      const evidence = pins.length > 0 && count === pins.length ? pinoutEvidence(doc, pins, count) : null;
-      const citedPage = tentative.pins.citation?.page ?? null;
-      if (
-        evidence &&
-        evidence.agreeing.length === pins.length &&
-        (citedPage === null || evidence.pages.includes(citedPage))
-      ) {
-        combined = candidate;
-        for (const image of focusedPins.images) {
-          if (!images.some((held) => held.page === image.page)) images.push(image);
-        }
-        rendered = [...new Set([...rendered, ...focusedPins.images.map((image) => image.page)])].sort((a, b) => a - b);
+      combined = combine(combined, pinRecoveryOnly(recoveredPins), partNumber ?? part.partNumber.value ?? undefined);
+      for (const image of focusedPins.images) {
+        if (!images.some((held) => held.page === image.page)) images.push(image);
       }
+      rendered = [...new Set([...rendered, ...focusedPins.images.map((image) => image.page)])].sort((a, b) => a - b);
     }
   }
 
@@ -1506,35 +1536,12 @@ export async function runExtraction(
     combined = combine(combined, recovered, partNumber ?? part.partNumber.value ?? undefined);
   }
 
-  // A THIRD, FOCUSED PINOUT PASS WAS MEASURED AND REVERTED, 2026-08-19.
-  //
-  // It targeted the parts that arrive with a pin COUNT and no pins, six of the
-  // fifty-three tuned parts, by asking for TWO fields over the pages that
-  // caption themselves as a pinout. The mechanism works: it read 100 pins off
-  // STM32F407VG and 80 off MSP430F5529, both exactly matching the hand-read
-  // oracle, and moved the tuned corpus from 45% to 55% fields and 19% to 23%
-  // shipping.
-  //
-  // It also made STM32H743ZI SHIP A WRONG NETLIST. Its LQFP144 figure prints
-  // VSS at 51 and VDD at 52; the model emitted one pin there instead of two,
-  // ran one behind for twenty-one pins, and re-synchronised at 73 by inventing
-  // a name for 72. Verified against a render of page 57 by hand.
-  //
-  // Nothing in this product can see that. The table numbers 1..144 with no
-  // gaps, the count agrees with `pinCount`, the cited page is real, and the
-  // pads come out exactly as `validateGeometry` expects. The name MULTISET is
-  // even preserved, because a dropped row plus renumbering moves a name rather
-  // than losing it, so comparing names against the page's text cannot catch it
-  // either. Only the hand-read oracle did.
-  //
-  // One wrong netlist in the four parts it unlocked. A wrong netlist is worse
-  // than a refusal by a wide margin, so the refusal stays.
-  //
-  // What would make it safe, and it is NOT a heuristic: these documents state
-  // their pinout TWICE, as a figure and as a pin-definition table. Requiring the
-  // two to agree is a check the document itself supplies. That is the thing to
-  // build before this is tried again, and reading a denser figure more carefully
-  // is not.
+  // An earlier unrestricted focused retry could produce a structurally valid
+  // but shifted dense pinout, so a focused answer must never become silently
+  // confirmed merely because its count and numbering look plausible. The
+  // recovery above is now retained consistently with the broad pass, while
+  // `confirmations()` independently compares the resolved symbol with PDF
+  // geometry and makes any uncorroborated pinout an explicit review item.
   return {
     ...mergeModelValues(part, doc, combined, combined.answeredBy ?? model.name, rendered),
     renderedPages: rendered,
